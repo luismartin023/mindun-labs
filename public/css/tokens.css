@@ -1,0 +1,66 @@
+/* MINDUN LABS — Tokens visuales (única fuente de color/tipografía/medidas).
+   Paleta calibrada sobre UI-MINDUN_LABS.png (inventario de Minecraft Dungeons). */
+
+@font-face {
+  font-family: 'Press Start 2P';
+  src: url('/assets/fonts/press-start-2p-latin-ext-400-normal.woff2') format('woff2'),
+       url('/assets/fonts/press-start-2p-latin-400-normal.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+}
+
+:root {
+  /* Superficies */
+  --bg-world: #1d1819;
+  --bg-panel: #2d2627;
+  --bg-panel-deep: #221e21;
+  --bg-panel-raised: #3a3233;
+  --bg-inset: #191516;
+  --bg-card: #262022;
+  --bg-card-hover: #332b2d;
+
+  /* Texto */
+  --text-primary: #f5f0e8;
+  --text-secondary: #c9beb7;
+  --text-muted: #8d8585;
+  --text-on-accent: #1d1819;
+
+  /* Bordes y acentos */
+  --border-stone: #57504f;
+  --border-bright: #8a817e;
+  --accent-gold: #e6a329;
+  --accent-gold-deep: #b97e1a;
+  --accent-purple: #c56ce8;
+  --accent-green: #83c96c;
+  --accent-emerald: #46c765;
+  --soul-purple: #a25cd6;
+
+  /* Rareza — centralizada, nunca suelta por el código */
+  --rarity-common: #a9a49e;
+  --rarity-rare: #4bbca2;
+  --rarity-unique: #ff9417;
+  --rarity-gilded: #e8c33a;
+  --rarity-special: #c56ce8;
+  --rarity-unknown: #6b6363;
+
+  /* Estado */
+  --success: #83c96c;
+  --danger: #e45a55;
+  --warning: #e6a329;
+  --info: #5aa9e6;
+  --focus-ring: #ffd66e;
+
+  /* Tipografía */
+  --font-pixel: 'Press Start 2P', 'Courier New', monospace;
+  --font-body: 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
+
+  /* Métricas */
+  --card-size: 76px;
+  --card-gap: 8px;
+  --frame-w: 3px;
+  --radius-hard: 3px;
+  --topbar-h: 56px;
+  --shadow-panel: 0 4px 0 rgba(0, 0, 0, 0.45), 0 10px 24px rgba(0, 0, 0, 0.35);
+  --shadow-card: inset 0 0 0 1px rgba(0, 0, 0, 0.55), 0 2px 0 rgba(0, 0, 0, 0.4);
+  --dur: 120ms;
+}
