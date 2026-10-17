@@ -1,0 +1,30 @@
+{
+  "name": "mindun-labs",
+  "version": "0.1.0",
+  "description": "MINDUN LABS by MKZ Company — Gestor de inventario y laboratorio de builds para Minecraft Dungeons",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "node --test tests/",
+    "start": "node server/index.js",
+    "seed": "node scripts/seed-db.mjs",
+    "extract": "node scripts/extract-wiki.mjs && node scripts/fetch-missing-images.mjs"
+  },
+  "keywords": [],
+  "type": "module",
+  "dependencies": {
+    "@fontsource/press-start-2p": "5.3.0",
+    "exceljs": "4.4.0",
+    "express": "5.3.0",
+    "jspdf": "4.2.1",
+    "jspdf-autotable": "5.0.9",
+    "multer": "2.4.0",
+    "three": "0.186.1"
+  },
+  "devDependencies": {
+    "cheerio": "1.2.0"
+  }
+}
