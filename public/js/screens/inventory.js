@@ -250,7 +250,8 @@ export async function mount(el, ctx) {
     if (f.search) {
       const q = f.search.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
       rows = rows.filter((e) => {
-        const hay = [e.item_name, e.localized_name, e.name, e.item_slug, e.notes]
+        const hay = [e.item_name, e.itemName, e.localized_name, e.itemLocalizedName,
+          e.name, e.item_slug, e.itemSlug, e.notes]
           .filter(Boolean).join(' ').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
         return hay.includes(q);
       });
@@ -590,9 +591,22 @@ export async function mount(el, ctx) {
 
   // ---------- eventos de filtros ----------
   $('#inv-search').addEventListener('input', (ev) => { state.filters.search = ev.target.value; renderGrid(); });
+
   $('#inv-sort').addEventListener('change', (ev) => { state.filters.sort = ev.target.value; renderGrid(); });
   $('#inv-add').onclick = openAddEntry;
   bus.on('data:changed', () => reload(false));
+
+  // Salto desde la búsqueda global (Ctrl+K): precarga el filtro antes de loadAll
+  let jumpSearch = null;
+  try {
+    const jump = JSON.parse(sessionStorage.getItem('mindun.jump') || 'null');
+    if (jump?.screen === 'inventario' && jump.search) {
+      sessionStorage.removeItem('mindun.jump');
+      jumpSearch = jump.search;
+      state.filters.search = jumpSearch;
+      $('#inv-search').value = jumpSearch;
+    }
+  } catch { /* noop */ }
 
   try {
     await loadAll();
@@ -600,6 +614,13 @@ export async function mount(el, ctx) {
     el.innerHTML = `<div class="mc-empty"><p class="pixel">Error al cargar</p>
       <p>${escapeHtml(err.message)} — ¿está el servidor en marcha? (npm start)</p></div>`;
     return;
+  }
+
+  // Seleccionar la tarjeta del salto una vez cargadas las entradas
+  if (jumpSearch) {
+    const card = [...document.querySelectorAll('.mc-card')].find((c) =>
+      (c.title || '').toLowerCase().includes(jumpSearch.toLowerCase()));
+    card?.click();
   }
 
   return () => {

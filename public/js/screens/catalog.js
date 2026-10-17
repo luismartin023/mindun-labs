@@ -114,6 +114,18 @@ export async function mount(el, ctx) {
   $('#new-item').addEventListener('click', () =>
     itemFormModal({ api, onSaved: load }));
 
+  // Salto desde la búsqueda global (Ctrl+K): precarga el filtro
+  try {
+    const jump = JSON.parse(sessionStorage.getItem('mindun.jump') || 'null');
+    if (jump?.screen === 'catalogo' && jump.search) {
+      sessionStorage.removeItem('mindun.jump');
+      state.filters.search = jump.search;
+      const inp = $('#f-search');
+      inp.value = jump.search;
+      setTimeout(() => inp.focus(), 60);
+    }
+  } catch { /* noop */ }
+
   function setView(v) {
     state.view = v;
     savePrefs({ catalogView: v });

@@ -384,3 +384,17 @@
 .muted { color: var(--text-muted); }
 .pixel-sm { font-family: var(--font-pixel); font-size: 9px; }
 .hidden { display: none !important; }
+
+/* ---------- Búsqueda global (Ctrl+K) ---------- */
+.search-palette { align-items: flex-start; padding-top: 12vh; }
+.pal-row {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 7px 9px; border: 2px solid transparent; border-radius: 4px;
+  background: transparent; cursor: pointer; text-align: left;
+  color: var(--text-primary); font-family: var(--font-body);
+}
+.pal-row--active, .pal-row:focus-visible { background: var(--bg-inset); border-color: var(--accent-gold); outline: none; }
+.pal-row img { width: 34px; height: 34px; object-fit: contain; image-rendering: pixelated; }
+.pal-row__ph { width: 34px; height: 34px; flex-shrink: 0; }
+.pal-row__name { flex: 1; font-size: 13px; }
+.pal-row__meta { font-size: 10px; color: var(--text-secondary); text-transform: capitalize; }

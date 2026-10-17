@@ -103,6 +103,94 @@ function paintNav() {
   ).join('');
 }
 
+// ---------- Búsqueda global (Ctrl/Cmd + K) ----------
+
+let palette = null;
+
+function openPalette() {
+  if (palette) return;
+  const ov = document.createElement('div');
+  ov.className = 'mc-overlay search-palette';
+  ov.innerHTML = `
+    <div class="mc-modal" role="dialog" aria-modal="true" aria-label="Búsqueda global" style="max-width:560px">
+      <div class="mc-modal__head">
+        <h2 class="pixel-sm">Buscar</h2>
+        <button class="mc-iconbtn" type="button" aria-label="Cerrar (Esc)">✕</button>
+      </div>
+      <div class="mc-modal__body" style="padding:10px">
+        <input class="mc-input" id="pal-input" type="search" placeholder="Nombre, alias, efecto, encantamiento…" autocomplete="off">
+        <div id="pal-results" style="margin-top:8px"></div>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  const input = ov.querySelector('#pal-input');
+  const resultsEl = ov.querySelector('#pal-results');
+  let ownedIds = null;
+  let rows = [];
+  let active = -1;
+
+  const close = () => { ov.remove(); palette = null; };
+  const jump = (item) => {
+    close();
+    const target = item._owned ? 'inventario' : 'catalogo';
+    sessionStorage.setItem('mindun.jump', JSON.stringify({ screen: target, search: item.name }));
+    if (route().screen === target) mount(); // ya estamos ahí: remontar para aplicar el salto
+    else navigate(target);
+  };
+  const paint = () => {
+    resultsEl.innerHTML = '';
+    rows.forEach((it, i) => {
+      const b = document.createElement('button');
+      b.className = 'pal-row' + (i === active ? ' pal-row--active' : '');
+      b.innerHTML = `
+        ${it.imagePath ? `<img src="${it.imagePath}" alt="" loading="lazy">` : '<span class="pal-row__ph"></span>'}
+        <span class="pal-row__name">${escapeHtml(it.name)}</span>
+        <span class="pal-row__meta">${escapeHtml(it.rarity ?? '')} · ${escapeHtml(it.category ?? '')}${it._owned ? ' · en inventario' : ''}</span>`;
+      b.addEventListener('click', () => jump(it));
+      b.addEventListener('mousemove', () => { active = i; paint(); });
+      resultsEl.appendChild(b);
+    });
+    if (!rows.length && input.value.trim()) {
+      resultsEl.innerHTML = '<p class="muted" style="padding:8px">Sin resultados.</p>';
+    }
+  };
+  let timer = null;
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const q = input.value.trim();
+      if (!q) { rows = []; paint(); return; }
+      try {
+        if (!ownedIds) {
+          const inv = await api.get('/api/inventory?pageSize=500');
+          ownedIds = new Set((inv.data || inv.items || []).map((e) => e.itemId ?? e.item_id));
+        }
+        const res = await api.get(`/api/items?search=${encodeURIComponent(q)}&pageSize=9`);
+        rows = (res.data || res.items || []).map((it) => ({ ...it, _owned: ownedIds.has(it.id) }));
+        active = rows.length ? 0 : -1;
+        paint();
+      } catch { resultsEl.innerHTML = '<p class="muted" style="padding:8px">Error de búsqueda.</p>'; }
+    }, 180);
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (rows.length) { active = (active + (e.key === 'ArrowDown' ? 1 : -1) + rows.length) % rows.length; paint(); }
+    } else if (e.key === 'Enter' && rows[active]) jump(rows[active]);
+  });
+  ov.addEventListener('pointerdown', (e) => { if (e.target === ov) close(); });
+  ov.querySelector('.mc-iconbtn').addEventListener('click', close);
+  palette = { close };
+  input.focus();
+}
+
+window.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    palette ? palette.close() : openPalette();
+  } else if (e.key === 'Escape' && palette) palette.close();
+});
+
 window.addEventListener('hashchange', mount);
 bus.on('data:changed', paintTopbar);
 
