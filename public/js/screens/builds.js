@@ -15,7 +15,7 @@ import { enchantSlotsEditor, acceptsEnchants } from '../ui/enchantSlots.js';
 import { slotOptionsFor } from '../ui/itemForm.js';
 import { weightsEditor, scoreBreakdownEl } from '../ui/scoring.js';
 import {
-  asList, categoryLabel, goalLabel, itemTitle, fmtDate, GOAL_LABELS,
+  asList, goalLabel, itemTitle, GOAL_LABELS,
 } from '../ui/format.js';
 
 export const title = 'Builds';

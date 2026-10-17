@@ -21,21 +21,21 @@ export function acceptsEnchants(category) {
   return Boolean(ENCH_TYPE_BY_CAT[category]);
 }
 
-function enchImgOrInitial(ench) {
+function enchImgOrInitial(ench, inDiamond = true) {
   if (ench?.imagePath) {
     const img = document.createElement('img');
     img.src = ench.imagePath;
     img.alt = enchantName(ench);
     img.draggable = false;
-    img.addEventListener('error', () => img.replaceWith(initial(ench)), { once: true });
+    img.addEventListener('error', () => img.replaceWith(initial(ench, inDiamond)), { once: true });
     return img;
   }
-  return initial(ench);
+  return initial(ench, inDiamond);
 }
 
-function initial(ench) {
+function initial(ench, counterRotate) {
   const s = document.createElement('span');
-  s.style.transform = 'rotate(-45deg)';
+  if (counterRotate) s.style.transform = 'rotate(-45deg)';
   s.style.fontFamily = 'var(--font-pixel)';
   s.style.fontSize = '12px';
   s.style.color = 'var(--accent-purple)';
@@ -137,7 +137,7 @@ export function enchantSlotsEditor({ item, selectedIds = [], optionsBySlot = [],
         icon.style.display = 'inline-flex';
         icon.style.alignItems = 'center';
         icon.style.justifyContent = 'center';
-        icon.appendChild(enchImgOrInitial(ench));
+        icon.appendChild(enchImgOrInitial(ench, false));
         const nm = document.createElement('span');
         nm.className = 'nm';
         nm.textContent = enchantName(ench);

@@ -9,7 +9,7 @@ import { bus, escapeHtml } from '../app.js';
 import { openModal } from './modal.js';
 import { toast } from './toast.js';
 import { enchantSlotsEditor, compatibleEnchantments, acceptsEnchants } from './enchantSlots.js';
-import { asList, categoryLabel, itemTitle, numOrNull, splitList, CATEGORY_LABELS, RARITY_LABELS } from './format.js';
+import { asList, categoryLabel, itemTitle, numOrNull, splitList, RARITY_LABELS } from './format.js';
 
 const CATEGORIES = ['melee_weapon', 'ranged_weapon', 'armor', 'artifact'];
 const RARITIES = ['common', 'rare', 'unique', 'gilded', 'special', 'unknown'];
@@ -84,8 +84,8 @@ export async function itemFormModal({ api, item, entry, onSaved } = {}) {
 
   // Encantamientos para el editor de espacios (solo si hay copia y es equipo)
   let enchMap = {};
-  const needsEnch = editEntry && (entry || theItem) && acceptsEnchants(theItem?.category);
-  if (needsEnch || isCreate) {
+  const needsEnch = editEntry && Boolean(entry || theItem) && acceptsEnchants(theItem?.category);
+  if (needsEnch) {
     try {
       enchMap = Object.fromEntries(
         asList(await api.get('/api/enchantments?pageSize=2000')).map((e) => [e.id, e]));

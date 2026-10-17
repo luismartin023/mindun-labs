@@ -81,6 +81,8 @@ export function dataTable({
 
   // ---------- render ----------
   function render() {
+    const hadFocus = el._searchEl && document.activeElement === el._searchEl;
+    const caret = hadFocus ? el._searchEl.selectionStart : null;
     el.innerHTML = '';
     const filtered = getFiltered();
     const total = filtered.length;
@@ -101,7 +103,7 @@ export function dataTable({
       bar.appendChild(input);
       el.appendChild(bar);
       // conservar foco tras re-render
-      if (document.activeElement === el._searchEl) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
+      if (hadFocus) { input.focus(); input.setSelectionRange(caret, caret); }
       el._searchEl = input;
     }
 

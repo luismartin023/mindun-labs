@@ -8,7 +8,7 @@ import { emptyState } from '../ui/emptyState.js';
 import { openItemPicker } from '../ui/itemPicker.js';
 import { weightsEditor, scoreBreakdownEl, scoreBadgeText } from '../ui/scoring.js';
 import {
-  asList, itemTitle, rarityLabel, splitList, RARITY_LABELS,
+  asList, rarityLabel, splitList, RARITY_LABELS,
 } from '../ui/format.js';
 
 export const title = 'Combinaciones';
@@ -202,19 +202,21 @@ export async function mount(el, ctx) {
     resultsEl.innerHTML = '';
     try {
       const body = {
-        onlyOwned: constraints.onlyOwned,
-        artifactCount: constraints.artifactCount,
-        requiredItemIds: [...state.requiredIds],
-        excludedItemIds: [...state.excludedIds],
-        rarities: [...state.rarities],
-        desiredTags: splitList(constraints.desiredTags),
+        constraints: {
+          onlyOwned: constraints.onlyOwned,
+          artifactCount: constraints.artifactCount,
+          requiredIds: [...state.requiredIds],
+          excludedIds: [...state.excludedIds],
+          rarities: [...state.rarities],
+          desiredTags: splitList(constraints.desiredTags),
+        },
         weights: constraints.weights,
         limit: constraints.limit,
       };
       const res = await api.post('/api/builds/generate', body);
       const results = asList(res?.results) || asList(res);
       state.results = results;
-      state.total = res?.total ?? results.length;
+      state.total = res?.explored ?? res?.total ?? results.length;
       state.truncated = Boolean(res?.truncated);
       renderResults();
     } catch (e) {
@@ -246,6 +248,7 @@ export async function mount(el, ctx) {
     h.textContent = 'Mejor coincidencia para tus criterios';
     resultsEl.appendChild(h);
 
+    const idOf = (x) => (typeof x === 'string' ? x : x?.id ?? null);
     results.forEach((r, idx) => {
       const build = r.build || r;
       const score = r.score ?? build.score;
@@ -269,9 +272,10 @@ export async function mount(el, ctx) {
       const slots = document.createElement('div');
       slots.className = 'row wrap';
       slots.style.marginTop = '8px';
-      const ids = [build.meleeItemId, build.rangedItemId, build.armorItemId, ...(build.artifactItemIds || [])];
-      for (const id of ids) {
-        const it = id ? itemsById[id] : null;
+      const s = r.slots || {};
+      const slotItems = [s.melee, s.ranged, s.armor, ...(s.artifacts || [])];
+      for (const raw of slotItems) {
+        const it = typeof raw === 'string' ? itemsById[raw] : raw;
         if (it) {
           const c = itemCard({ item: it, size: 44, showPower: false, showQty: false, showFav: false });
           slots.appendChild(c);
@@ -305,7 +309,14 @@ export async function mount(el, ctx) {
       save.addEventListener('click', async () => {
         try {
           const name = `Sugerencia ${new Date().toLocaleString('es-ES')}`;
-          await api.post('/api/builds', { ...build, name, status: 'saved' });
+          const arts = (s.artifacts || []).map((a) => (typeof a === 'string' ? a : a?.id ?? null));
+          while (arts.length < 3) arts.push(null);
+          await api.post('/api/builds', {
+            name, status: 'saved',
+            meleeItemId: idOf(s.melee), rangedItemId: idOf(s.ranged), armorItemId: idOf(s.armor),
+            artifactItemIds: arts,
+            weights: constraints.weights,
+          });
           toast.success('Guardada en Builds');
           bus.emit('data:changed');
         } catch (e) { toast.error(`No se pudo guardar: ${e.message}`); }

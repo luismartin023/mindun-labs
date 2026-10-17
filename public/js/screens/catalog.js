@@ -13,7 +13,7 @@ import { dataTable } from '../ui/dataTable.js';
 import { emptyState } from '../ui/emptyState.js';
 import {
   asList, categoryLabel, enchantName, fmtDate, itemTitle,
-  rarityLabel, rarityTag, statRow, statusLabel, tagsHtml,
+  rarityTag, statRow, statusLabel, tagsHtml,
   CATEGORY_LABELS, RARITY_ORDER,
 } from '../ui/format.js';
 

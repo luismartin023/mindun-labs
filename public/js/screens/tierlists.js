@@ -410,6 +410,7 @@ export async function mount(el, ctx) {
         lab.style.background = row.color || 'var(--bg-panel-deep)';
         lab.style.color = '#1d1819';
         lab.textContent = row.label;
+        if (String(row.label).length > 2) lab.classList.add('tier-row__label--long');
         lab.title = 'Doble clic para renombrar';
         lab.addEventListener('dblclick', () => rowModal(row));
         const items = document.createElement('div');
