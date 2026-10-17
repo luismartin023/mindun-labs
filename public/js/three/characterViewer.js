@@ -30,6 +30,7 @@ export function createCharacterViewer(container, opts = {}) {
 		disposed: false,
 		paused: !!opts.paused,
 		reduced: false,
+		lost: false,
 		running: false,
 		raf: 0,
 		renderer: null,
@@ -63,13 +64,13 @@ export function createCharacterViewer(container, opts = {}) {
 	// Carga diferida defensiva de Three (ver cabecera).
 	import('/vendor/three.module.js')
 		.then((THREE) => { if (!st.disposed) init(THREE); })
-		.catch(failToFallback);
+		.catch(() => { if (!st.disposed) failToFallback(); });
 
 	return api;
 
 	// ------------------------------------------------------------------
 	function failToFallback() {
-		if (!st.disposed) container.classList.add('no-webgl');
+		try { container.classList.add('no-webgl'); } catch (_e) { /* noop */ }
 	}
 
 	function effectivePaused() { return st.paused || st.reduced; }
@@ -85,7 +86,16 @@ export function createCharacterViewer(container, opts = {}) {
 			failToFallback();
 			return;
 		}
-		st.renderer = renderer;
+		try {
+			buildScene(THREE, renderer);
+		} catch (_e) {
+			// Fallo a mitad de montaje: limpia lo creado y degrada al fallback.
+			failToFallback();
+			try { dispose(); } catch (_d) { /* noop */ }
+		}
+	}
+
+	function buildScene(THREE, renderer) {
 		const canvas = renderer.domElement;
 		st.canvas = canvas;
 
@@ -186,7 +196,13 @@ export function createCharacterViewer(container, opts = {}) {
 				renderOnce();
 			} else if (e.key === 'Home') { e.preventDefault(); resetView(); }
 		};
-		st.onContextLost = (e) => { e.preventDefault(); stopLoop(); failToFallback(); };
+		st.onContextLost = (e) => {
+			if (st.disposed) return;
+			e.preventDefault();
+			st.lost = true;
+			stopLoop();
+			failToFallback();
+		};
 
 		canvas.addEventListener('pointerdown', st.onPointerDown);
 		canvas.addEventListener('pointermove', st.onPointerMove);
@@ -219,6 +235,7 @@ export function createCharacterViewer(container, opts = {}) {
 
 	// ---------- Bucle / animación ----------
 	function applyCamera() {
+		if (!st.camera) return;
 		const r = BASE_RADIUS * st.zoom;
 		const cp = Math.cos(st.pitch);
 		st.camera.position.set(
@@ -244,6 +261,10 @@ export function createCharacterViewer(container, opts = {}) {
 	}
 
 	function tick() {
+		if (st.disposed || st.lost || !st.renderer || !st.clock) {
+			st.running = false; st.raf = 0;
+			return;
+		}
 		st.raf = requestAnimationFrame(tick);
 		const dt = Math.min(st.clock.getDelta(), 0.05);
 		st.t += dt;
@@ -254,13 +275,13 @@ export function createCharacterViewer(container, opts = {}) {
 	}
 
 	function renderOnce() {
-		if (st.disposed || !st.renderer || st.running) return; // el bucle ya dibuja
+		if (st.disposed || st.lost || !st.renderer || st.running) return; // el bucle ya dibuja
 		applyCamera();
 		st.renderer.render(st.scene, st.camera);
 	}
 
 	function startLoop() {
-		if (st.running || st.disposed || !st.renderer) return;
+		if (st.running || st.disposed || st.lost || !st.renderer || !st.clock) return;
 		st.running = true;
 		st.clock.getDelta(); // descarta el tiempo detenido
 		st.raf = requestAnimationFrame(tick);
