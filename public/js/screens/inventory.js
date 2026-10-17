@@ -5,6 +5,7 @@
 import { api, qs } from '../api/client.js';
 import { escapeHtml } from '../app.js';
 import { createCharacterViewer } from '../three/characterViewer.js';
+import { enchantSlotsEditor, enchantDropdown, acceptsEnchants } from '../ui/enchantSlots.js';
 
 export const title = 'Inventario';
 
@@ -151,6 +152,7 @@ export async function mount(el, ctx) {
     is_favorite: r.is_favorite ?? r.isFavorite ?? 0,
     is_gilded: r.is_gilded ?? r.isGilded ?? 0,
     selected_enchant_ids: r.selected_enchant_ids ?? r.selectedEnchantIds ?? [null, null, null],
+    enchant_tiers: r.enchant_tiers ?? r.enchantTiers ?? [],
     notes: r.notes ?? null,
     updated_at: r.updated_at ?? r.updatedAt,
   });
@@ -163,6 +165,8 @@ export async function mount(el, ctx) {
     ...(b.is_favorite !== undefined && { isFavorite: !!b.is_favorite }),
     ...(b.is_gilded !== undefined && { isGilded: !!b.is_gilded }),
     ...(b.selected_enchant_ids !== undefined && { selectedEnchantIds: b.selected_enchant_ids }),
+    ...(b.enchant_tiers !== undefined && { enchantTiers: b.enchant_tiers }),
+    ...(b.gilded_enchantment_id !== undefined && { gildedEnchantmentId: b.gilded_enchantment_id }),
     ...(b.notes !== undefined && { notes: b.notes }),
   });
 
@@ -368,7 +372,7 @@ export async function mount(el, ctx) {
       ${(fi.description ?? col(e, 'description')) ? `<p class="detail__desc">${escapeHtml(fi.description ?? col(e, 'description'))}</p>` : ''}
       ${e.notes ? `<p class="detail__desc" style="font-style:normal">📝 ${escapeHtml(e.notes)}</p>` : ''}
       <h3 class="detail__section-title">Encantamientos</h3>
-      <div class="ench-slots" id="ench-slots"></div>
+      <div id="ench-slots"></div>
       <div class="row wrap" style="margin-top:26px; justify-content:center">
         <button class="mc-btn mc-btn--sm" id="btn-equip">Equipar</button>
         <button class="mc-btn mc-btn--sm" id="btn-fav">${e.is_favorite ? '★ Favorito' : '☆ Favorito'}</button>
@@ -413,7 +417,7 @@ export async function mount(el, ctx) {
   }
   const fullItem = (e) => state.itemsById.get(entryItem(e).id) || {};
 
-  // ---- encantamientos: 3 rombos + picker ----
+  // ---- encantamientos: editor compartido (rombos + dropdown con iconos) ----
   function enchOptionsFor(e) {
     const types = TYPE_FOR_ENCH[entryItem(e).category] || [];
     return state.enchants.filter((en) => types.includes(en.enchant_type || en.enchantType));
@@ -421,42 +425,26 @@ export async function mount(el, ctx) {
 
   function renderEnchSlots(e) {
     const host = $('#ench-slots');
-    const sel = Array.isArray(e.selected_enchant_ids) ? e.selected_enchant_ids : safeJson(e.selected_enchant_ids) || [null, null, null];
-    for (let i = 0; i < 3; i++) {
-      const enchId = sel[i];
-      const ench = enchId ? state.enchants.find((x) => x.id === enchId) : null;
-      const d = document.createElement('div');
-      d.className = `ench-slot ${ench ? 'filled' : ''}`;
-      d.title = ench ? ench.name : `Espacio ${i + 1} — vacío`;
-      d.innerHTML = ench
-        ? (ench.image_path || ench.imagePath ? `<img src="${ench.image_path || ench.imagePath}" alt="${escapeHtml(ench.name)}">` : '<svg viewBox="0 0 16 16" fill="#c56ce8"><path d="M8 1l2 4 5 1-4 3 1 5-4-3-4 3 1-5-4-3 5-1z"/></svg>')
-        : '<svg viewBox="0 0 16 16" fill="none" stroke="#57504f" stroke-width="1.5"><circle cx="8" cy="8" r="4"/></svg>';
-      d.innerHTML += `<span class="ench-slot__n">Espacio ${i + 1}</span>`;
-      d.onclick = () => enchPicker(e, i);
-      host.append(d);
-    }
-  }
-
-  function enchPicker(e, slotIdx) {
-    const sel = Array.isArray(e.selected_enchant_ids) ? [...e.selected_enchant_ids] : safeJson(e.selected_enchant_ids) || [null, null, null];
+    if (!host) return;
+    host.innerHTML = '';
     const options = enchOptionsFor(e);
-    const box = document.createElement('div');
-    box.innerHTML = options.length
-      ? `<div class="ench-picker">
-          <div class="ench-option" data-id=""><span class="nm muted">— Vaciar espacio —</span></div>
-          ${options.map((o) => `<div class="ench-option ${sel[slotIdx] === o.id ? 'chosen' : ''}" data-id="${o.id}">
-            ${o.image_path || o.imagePath ? `<img src="${o.image_path || o.imagePath}" alt="">` : ''}
-            <span class="nm">${escapeHtml(o.name)}</span>
-            ${o.tiers?.length ? `<span class="tier">I–III</span>` : ''}</div>`).join('')}</div>`
-      : `<div class="mc-empty"><p class="pixel">Sin opciones</p><p>Esta categoría no admite encantamientos.</p></div>`;
-    openModal({ title: `Encantamiento — espacio ${slotIdx + 1}`, body: box });
-    box.querySelectorAll('.ench-option').forEach((opt) => {
-      opt.onclick = async () => {
-        sel[slotIdx] = opt.dataset.id || null;
-        await patch(e, { selected_enchant_ids: sel });
-        document.querySelector('.mc-overlay')?.remove();
-      };
+    if (!options.length && !TYPE_FOR_ENCH[entryItem(e).category]?.length) {
+      host.innerHTML = '<p class="muted" style="font-size:11px;margin:0">Los artefactos no admiten encantamientos.</p>';
+      return;
+    }
+    const sel = Array.isArray(e.selected_enchant_ids)
+      ? e.selected_enchant_ids
+      : safeJson(e.selected_enchant_ids) || [null, null, null];
+    const tiers = Array.isArray(e.enchant_tiers) ? e.enchant_tiers : safeJson(e.enchant_tiers) || [];
+    const ed = enchantSlotsEditor({
+      item: fullItem(e),
+      selectedIds: sel,
+      tiers,
+      optionsBySlot: [options, options, options],
+      onChange: (ids) => patch(e, { selected_enchant_ids: ids }),
+      onTiersChange: (t) => patch(e, { enchant_tiers: t }),
     });
+    host.appendChild(ed);
   }
 
   // ---- equipar (lógico: guarda en profile.prefs.equipped) ----
@@ -505,10 +493,32 @@ export async function mount(el, ctx) {
       <label class="mc-label">Cantidad</label>
       <input class="mc-input" id="f-qty" type="number" min="0" value="${e.quantity}">
       <label class="mc-check"><input type="checkbox" id="f-gilded" ${e.is_gilded ? 'checked' : ''}> Objeto dorado (gilded)</label>
+      <div id="f-gilded-ench" style="margin:4px 0 8px"></div>
       <label class="mc-label">Nombre en español</label>
       <input class="mc-input" id="f-loc" value="${escapeHtml(col(e, 'localized_name') || '')}" placeholder="Túnica de brasas…">
       <label class="mc-label">Notas</label>
       <textarea class="mc-textarea" id="f-notes" rows="3">${escapeHtml(e.notes || '')}</textarea>`;
+    // Encantamiento dorado: dropdown con iconos (visible solo si es dorado)
+    const gildedHost = box.querySelector('#f-gilded-ench');
+    const gildedChk = box.querySelector('#f-gilded');
+    let gildedId = e.gildedEnchantmentId ?? e.gilded_enchantment_id ?? null;
+    const gildedOpts = acceptsEnchants(it.category) ? enchOptionsFor(e) : [];
+    if (gildedOpts.length) {
+      const lab = document.createElement('p');
+      lab.className = 'mc-label';
+      lab.style.margin = '0 0 4px';
+      lab.textContent = 'Encantamiento dorado';
+      const dd = enchantDropdown({
+        options: gildedOpts,
+        value: gildedId,
+        placeholder: 'Elegir encantamiento dorado…',
+        onPick: (id) => { gildedId = id; },
+      });
+      gildedHost.append(lab, dd);
+      const sync = () => gildedHost.classList.toggle('hidden', !gildedChk.checked);
+      gildedChk.addEventListener('change', sync);
+      sync();
+    }
     openModal({
       title: `Editar — ${it.name}`, body: box,
       actions: [{
@@ -518,6 +528,7 @@ export async function mount(el, ctx) {
             item_level: box.querySelector('#f-level').value ? Number(box.querySelector('#f-level').value) : null,
             quantity: Math.max(0, Number(box.querySelector('#f-qty').value) || 0),
             is_gilded: box.querySelector('#f-gilded').checked ? 1 : 0,
+            gilded_enchantment_id: box.querySelector('#f-gilded').checked ? gildedId : null,
             notes: box.querySelector('#f-notes').value || null,
           };
           const loc = box.querySelector('#f-loc').value.trim();
@@ -560,7 +571,9 @@ export async function mount(el, ctx) {
     draw(items);
     box.querySelector('#pk-search').oninput = (ev) => {
       const q = ev.target.value.toLowerCase();
-      draw(items.filter((i) => i.name.toLowerCase().includes(q) || (i.localized_name || '').toLowerCase().includes(q)));
+      draw(items.filter((i) => i.name.toLowerCase().includes(q)
+        || (i.localizedName || i.localized_name || '').toLowerCase().includes(q)
+        || (i.aliases || []).some((a) => String(a).toLowerCase().includes(q))));
     };
     openModal({ title: 'Añadir copia al inventario', body: box });
   }
@@ -568,7 +581,7 @@ export async function mount(el, ctx) {
   // ---------- ciclo ----------
   async function patch(e, body) {
     await api.patch(`/api/inventory/${e.id}`, toApiPatch(body));
-    reload(false);
+    // la suscripción a data:changed recarga la pantalla y repinta la topbar
     bus.emit('data:changed');
   }
 
@@ -582,7 +595,6 @@ export async function mount(el, ctx) {
     state.profile = profile;
     state.selectedId = prev && state.entries.find((e) => e.id === prev) ? prev : state.entries[0]?.id;
     renderAll();
-    bus.emit('data:changed');
   }
 
   function renderAll() {

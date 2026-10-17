@@ -7,6 +7,7 @@ import { itemCard } from '../ui/itemCard.js';
 import { emptyState } from '../ui/emptyState.js';
 import { openItemPicker } from '../ui/itemPicker.js';
 import { weightsEditor, scoreBreakdownEl, scoreBadgeText } from '../ui/scoring.js';
+import { enchantChipsPicker } from '../ui/enchantSlots.js';
 import {
   asList, rarityLabel, splitList, RARITY_LABELS,
 } from '../ui/format.js';
@@ -55,9 +56,12 @@ export async function mount(el, ctx) {
     onlyOwned: false,
     artifactCount: 3,
     desiredTags: '',
+    desiredEnchantIds: [],
+    forbiddenEnchantIds: [],
     limit: 50,
     weights: {},
   };
+  let enchantOptions = [];
 
   function chipRow(container, ids, label, max) {
     const wrap = document.createElement('div');
@@ -182,6 +186,34 @@ export async function mount(el, ctx) {
   chipRow(form, state.requiredIds, 'Ítems obligatorios (máx. 3)', 3);
   chipRow(form, state.excludedIds, 'Ítems excluidos', 0);
 
+  // Encantamientos deseados/prohibidos: selección con iconos, nunca texto libre
+  const enchBlock = document.createElement('div');
+  enchBlock.className = 'ench-pp-grid';
+  const dWrap = document.createElement('div');
+  const dL = document.createElement('p');
+  dL.className = 'mc-label';
+  dL.textContent = 'Encantamientos deseados';
+  const dPick = enchantChipsPicker({
+    options: enchantOptions,
+    values: constraints.desiredEnchantIds,
+    placeholder: 'Añadir deseado…',
+    onChange: (ids) => { constraints.desiredEnchantIds = ids; },
+  });
+  dWrap.append(dL, dPick);
+  const fWrap = document.createElement('div');
+  const fL = document.createElement('p');
+  fL.className = 'mc-label';
+  fL.textContent = 'Encantamientos prohibidos';
+  const fPick = enchantChipsPicker({
+    options: enchantOptions,
+    values: constraints.forbiddenEnchantIds,
+    placeholder: 'Añadir prohibido…',
+    onChange: (ids) => { constraints.forbiddenEnchantIds = ids; },
+  });
+  fWrap.append(fL, fPick);
+  enchBlock.append(dWrap, fWrap);
+  form.appendChild(enchBlock);
+
   const wL = document.createElement('p');
   wL.className = 'mc-label';
   wL.textContent = 'Pesos de los criterios (0–10)';
@@ -209,6 +241,8 @@ export async function mount(el, ctx) {
           excludedIds: [...state.excludedIds],
           rarities: [...state.rarities],
           desiredTags: splitList(constraints.desiredTags),
+          desiredEnchantIds: constraints.desiredEnchantIds,
+          forbiddenEnchantIds: constraints.forbiddenEnchantIds,
         },
         weights: constraints.weights,
         limit: constraints.limit,
@@ -339,8 +373,24 @@ export async function mount(el, ctx) {
 
   // precargar ítems para tarjetas de requeridos/excluidos y resultados
   try {
-    const items = asList(await api.get('/api/items?pageSize=5000'));
+    const [items, enchs] = await Promise.all([
+      api.get('/api/items?pageSize=5000').then(asList),
+      api.get('/api/enchantments?pageSize=2000').then(asList).catch(() => []),
+    ]);
     for (const i of items) itemsById[i.id] = i;
+    enchantOptions = enchs;
+    dPick.replaceWith(enchantChipsPicker({
+      options: enchantOptions,
+      values: constraints.desiredEnchantIds,
+      placeholder: 'Añadir deseado…',
+      onChange: (ids) => { constraints.desiredEnchantIds = ids; },
+    }));
+    fPick.replaceWith(enchantChipsPicker({
+      options: enchantOptions,
+      values: constraints.forbiddenEnchantIds,
+      placeholder: 'Añadir prohibido…',
+      onChange: (ids) => { constraints.forbiddenEnchantIds = ids; },
+    }));
   } catch (e) {
     toast.warn(`Catálogo no disponible: ${e.message}`);
   }

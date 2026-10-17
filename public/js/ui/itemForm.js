@@ -8,7 +8,7 @@
 import { bus, escapeHtml } from '../app.js';
 import { openModal } from './modal.js';
 import { toast } from './toast.js';
-import { enchantSlotsEditor, compatibleEnchantments, acceptsEnchants } from './enchantSlots.js';
+import { enchantSlotsEditor, compatibleEnchantments, acceptsEnchants, enchantDropdown, slotOptionsFor } from './enchantSlots.js';
 import { asList, categoryLabel, itemTitle, numOrNull, splitList, RARITY_LABELS } from './format.js';
 
 const CATEGORIES = ['melee_weapon', 'ranged_weapon', 'armor', 'artifact'];
@@ -54,23 +54,6 @@ function checkEl(labelText, checked) {
   s.innerHTML = escapeHtml(labelText);
   l.append(c, s);
   return { wrap: l, input: c };
-}
-
-/** Opciones de encantamiento por espacio a partir de la ficha del ítem. */
-export function slotOptionsFor(item, enchMap) {
-  const bySlot = [[], [], []];
-  const slots = Array.isArray(item?.enchantmentSlots) ? item.enchantmentSlots : [];
-  if (slots.length) {
-    for (const s of slots) {
-      const idx = Math.min(2, Math.max(0, (s.slotIndex || 1) - 1));
-      bySlot[idx] = (s.options || []).map((o) =>
-        enchMap[o.enchantmentId] || { id: o.enchantmentId, name: o.enchantmentId });
-    }
-  } else if (acceptsEnchants(item?.category)) {
-    const compat = compatibleEnchantments(Object.values(enchMap), item.category);
-    bySlot[0] = bySlot[1] = bySlot[2] = compat;
-  }
-  return bySlot;
 }
 
 export async function itemFormModal({ api, item, entry, onSaved } = {}) {
@@ -192,20 +175,47 @@ export async function itemFormModal({ api, item, entry, onSaved } = {}) {
 
     entrySection.append(row, checks, field('Notas', entInputs.notes), field('Procedencia', entInputs.source));
 
-    // Editor de encantamientos seleccionados
+    // Editor de encantamientos seleccionados (dropdown con iconos + niveles)
     if (acceptsEnchants(theItem?.category)) {
       const eh = document.createElement('p');
       eh.className = 'mc-label';
       eh.textContent = 'Encantamientos elegidos';
       entrySection.appendChild(eh);
+      const slotOpts = slotOptionsFor(theItem, enchMap);
       const editor = enchantSlotsEditor({
         item: theItem,
         selectedIds: entry?.selectedEnchantIds || [null, null, null],
-        optionsBySlot: slotOptionsFor(theItem, enchMap),
+        tiers: entry?.enchantTiers || [],
+        optionsBySlot: slotOpts,
         onChange: (ids) => { entInputs.selectedEnchantIds = ids; },
+        onTiersChange: (t) => { entInputs.enchantTiers = t; },
       });
       entInputs.selectedEnchantIds = entry?.selectedEnchantIds || [null, null, null];
+      entInputs.enchantTiers = entry?.enchantTiers || [];
       entrySection.appendChild(editor);
+
+      // Encantamiento dorado: dropdown con iconos (compatible o fijo)
+      const gildRow = document.createElement('div');
+      gildRow.style.marginTop = '8px';
+      const gildLab = document.createElement('span');
+      gildLab.className = 'mc-label';
+      gildLab.style.marginBottom = '4px';
+      gildLab.textContent = 'Encantamiento dorado (solo si la copia es dorada)';
+      const compat = Object.values(enchMap).length
+        ? compatibleEnchantments(Object.values(enchMap), theItem.category)
+        : [];
+      entInputs.gildedEnchantmentId = entry?.gildedEnchantmentId || null;
+      const gildDd = enchantDropdown({
+        options: compat,
+        value: entInputs.gildedEnchantmentId,
+        placeholder: 'Sin encantamiento dorado…',
+        onPick: (id) => { entInputs.gildedEnchantmentId = id; },
+      });
+      gildRow.append(gildLab, gildDd);
+      const syncGild = () => gildRow.classList.toggle('hidden', !entInputs.isGilded.checked);
+      entInputs.isGilded.addEventListener('change', syncGild);
+      syncGild();
+      entrySection.appendChild(gildRow);
     }
   }
 
@@ -259,6 +269,8 @@ export async function itemFormModal({ api, item, entry, onSaved } = {}) {
           notes: entInputs.notes.value.trim() || null,
           source: entInputs.source.value.trim() || null,
           selectedEnchantIds: entInputs.selectedEnchantIds || [null, null, null],
+          enchantTiers: entInputs.enchantTiers || [],
+          gildedEnchantmentId: entInputs.isGilded.checked ? (entInputs.gildedEnchantmentId || null) : null,
         });
       } else if (isCreate && addCopyCheck?.checked && savedItem?.id) {
         await api.post('/api/inventory', {
@@ -270,6 +282,8 @@ export async function itemFormModal({ api, item, entry, onSaved } = {}) {
           isGilded: entInputs.isGilded.checked,
           notes: entInputs.notes.value.trim() || null,
           selectedEnchantIds: entInputs.selectedEnchantIds || [null, null, null],
+          enchantTiers: entInputs.enchantTiers || [],
+          gildedEnchantmentId: entInputs.isGilded.checked ? (entInputs.gildedEnchantmentId || null) : null,
         });
       }
       toast.success('Guardado correctamente');

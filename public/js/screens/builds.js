@@ -11,8 +11,7 @@ import { itemCard } from '../ui/itemCard.js';
 import { buildCard } from '../ui/buildCard.js';
 import { emptyState } from '../ui/emptyState.js';
 import { openItemPicker } from '../ui/itemPicker.js';
-import { enchantSlotsEditor, acceptsEnchants } from '../ui/enchantSlots.js';
-import { slotOptionsFor } from '../ui/itemForm.js';
+import { enchantSlotsEditor, acceptsEnchants, slotOptionsFor } from '../ui/enchantSlots.js';
 import { weightsEditor, scoreBreakdownEl } from '../ui/scoring.js';
 import {
   asList, goalLabel, itemTitle, GOAL_LABELS,
