@@ -32,6 +32,7 @@ export async function mount(el, ctx) {
   const { bus } = ctx;
   const state = {
     entries: [], enchants: [], meta: null, profile: null,
+    itemsById: new Map(),
     selectedId: null, filters: { category: null, search: '', sort: 'power-desc' },
     viewer: null,
   };
@@ -126,8 +127,8 @@ export async function mount(el, ctx) {
       api.get('/api/meta').catch(() => null),
       api.get('/api/profile').catch(() => null),
     ]);
-    state.entries = inv.rows || inv.items || inv || [];
-    state.enchants = ench.rows || ench.items || ench || [];
+    state.entries = (inv.rows || inv.data || inv.items || inv || []).map(normEntry);
+    state.enchants = ench.rows || ench.data || ench.items || ench || [];
     state.meta = meta;
     state.profile = profile;
     if (!state.entries.length) renderEmpty();
@@ -139,8 +140,35 @@ export async function mount(el, ctx) {
     }
   }
 
-  /** Columna tolerante a prefijos del join (item_x o x). */
-  const col = (e, name) => e[name] ?? e[`item_${name}`];
+  /** Normaliza una copia del API (camelCase dominio) al shape interno snake. */
+  const normEntry = (r) => ({
+    ...r,
+    id: r.id,
+    item_id: r.item_id ?? r.itemId,
+    quantity: r.quantity ?? 1,
+    power_level: r.power_level ?? r.powerLevel ?? null,
+    item_level: r.item_level ?? r.itemLevel ?? null,
+    is_favorite: r.is_favorite ?? r.isFavorite ?? 0,
+    is_gilded: r.is_gilded ?? r.isGilded ?? 0,
+    selected_enchant_ids: r.selected_enchant_ids ?? r.selectedEnchantIds ?? [null, null, null],
+    notes: r.notes ?? null,
+    updated_at: r.updated_at ?? r.updatedAt,
+  });
+
+  /** Traduce campos internos snake → body camelCase que acepta el API. */
+  const toApiPatch = (b) => ({
+    ...(b.quantity !== undefined && { quantity: b.quantity }),
+    ...(b.power_level !== undefined && { powerLevel: b.power_level }),
+    ...(b.item_level !== undefined && { itemLevel: b.item_level }),
+    ...(b.is_favorite !== undefined && { isFavorite: !!b.is_favorite }),
+    ...(b.is_gilded !== undefined && { isGilded: !!b.is_gilded }),
+    ...(b.selected_enchant_ids !== undefined && { selectedEnchantIds: b.selected_enchant_ids }),
+    ...(b.notes !== undefined && { notes: b.notes }),
+  });
+
+  /** Columna tolerante a prefijos del join (x, item_x o itemX). */
+  const camel = (s) => `item${s.replace(/(^|_)(\w)/g, (_m, _p, c) => c.toUpperCase())}`;
+  const col = (e, name) => e[name] ?? e[`item_${name}`] ?? e[camel(name)];
 
   const entryItem = (e) => ({
     id: e.item_id || e.itemId,
@@ -160,6 +188,7 @@ export async function mount(el, ctx) {
         state.viewer = createCharacterViewer($('#char-stage'), {
           paused: ctx.prefs?.motion3d === false,
         });
+        window.__viewer = state.viewer;
       } catch { $('#char-stage').classList.add('no-webgl'); }
     }
     renderEquip();
@@ -190,7 +219,8 @@ export async function mount(el, ctx) {
           ? `<img src="${it.imagePath}" alt="${escapeHtml(it.name)}"><span class="equip-slot__power">${entry.power_level ?? ''}</span>`
           : `<div class="mc-img-missing">${escapeHtml(it.name?.[0] || '?')}</div>`;
       } else {
-        div.innerHTML = `<span class="muted pixel-sm" style="font-size:7px">${s.label.split(' ')[0]}</span>`;
+        const short = { melee: 'Melee', ranged: 'Distancia', armor: 'Armadura', art1: 'Artef.', art2: 'Artef.', art3: 'Artef.' }[s.key] || s.label;
+        div.innerHTML = `<span class="muted pixel-sm" style="font-size:7px">${short}</span>`;
       }
       host.append(div);
     }
@@ -252,7 +282,14 @@ export async function mount(el, ctx) {
     div.querySelector('img')?.addEventListener('error', (e) => {
       e.target.outerHTML = `<div class="mc-img-missing">${escapeHtml(it.name?.[0] || '?')}</div>`;
     });
-    const select = () => { state.selectedId = entry.id; renderGrid(); renderDetail(); };
+    const select = async () => {
+      state.selectedId = entry.id;
+      // en tablet/móvil el detalle es un drawer: ábrelo al seleccionar
+      if (innerWidth <= 1100) $('#detail').classList.add('open');
+      renderGrid(); renderDetail();
+      await ensureItem(entryItem(entry).id);
+      if (state.selectedId === entry.id) renderDetail();
+    };
     div.onclick = select;
     div.onkeydown = (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); select(); } };
     return div;
@@ -297,12 +334,13 @@ export async function mount(el, ctx) {
       return;
     }
     const it = entryItem(e);
+    const fi = fullItem(e);
     const rarity = it.rarity || 'unknown';
-    const passives = safeJson(col(e, 'passive_effects')) || [];
-    const uniques = safeJson(col(e, 'unique_effects')) || [];
-    const locations = safeJson(col(e, 'locations')) || [];
-    const runes = safeJson(col(e, 'runes')) || [];
-    const builtIn = col(e, 'built_in_enchantment');
+    const passives = fi.passiveEffects || safeJson(col(e, 'passive_effects')) || [];
+    const uniques = fi.uniqueEffects || safeJson(col(e, 'unique_effects')) || [];
+    const locations = fi.locations || safeJson(col(e, 'locations')) || [];
+    const runes = fi.runes || safeJson(col(e, 'runes')) || [];
+    const builtIn = fi.builtInEnchantment ?? col(e, 'built_in_enchantment');
     host.innerHTML = `
       <div class="detail__head">
         <div>
@@ -311,6 +349,7 @@ export async function mount(el, ctx) {
         </div>
         <div class="detail__img">${it.imagePath ? `<img src="${it.imagePath}" alt="${escapeHtml(it.name)}">` : `<div class="mc-img-missing">${escapeHtml(it.name?.[0] || '?')}</div>`}</div>
       </div>
+      <button class="mc-iconbtn hidden" id="detail-close" aria-label="Cerrar detalle" style="position:absolute;top:8px;right:8px;z-index:2">✕</button>
       <h1 class="detail__name">${escapeHtml(it.name)}</h1>
       <div class="detail__sub">${CAT_LABEL[it.category] || it.category}
         ${e.item_level != null ? ` · Nivel ${e.item_level}` : ''}
@@ -320,12 +359,12 @@ export async function mount(el, ctx) {
         ${passives.map((p) => `<div class="stat-row"><span class="ico">◇</span><span class="v">${escapeHtml(p)}</span></div>`).join('')}
         ${uniques.map((p) => `<div class="stat-row passive"><span class="ico">◆</span><span class="v">${escapeHtml(p)}</span></div>`).join('')}
         ${builtIn ? `<div class="stat-row"><span class="ico">◈</span><span class="k">Encantamiento fijo:</span><span class="v">${escapeHtml(builtIn)}</span></div>` : ''}
-        ${col(e, 'combo_length') ? `<div class="stat-row"><span class="ico">⟳</span><span class="k">Combo:</span><span class="v">${col(e, 'combo_length')} golpes</span></div>` : ''}
+        ${(fi.comboLength ?? col(e, 'combo_length')) ? `<div class="stat-row"><span class="ico">⟳</span><span class="k">Combo:</span><span class="v">${fi.comboLength ?? col(e, 'combo_length')} golpes</span></div>` : ''}
         ${runes.length ? `<div class="stat-row"><span class="ico">ᚱ</span><span class="k">Runas:</span><span class="v">${runes.map(escapeHtml).join(' ')}</span></div>` : ''}
         ${locations.length ? `<div class="stat-row"><span class="ico">⌂</span><span class="k">Se obtiene en:</span><span class="v">${locations.map(escapeHtml).join(', ')}</span></div>` : ''}
-        ${col(e, 'source') ? `<div class="stat-row"><span class="ico">⌕</span><span class="k">Fuente:</span><span class="v">${escapeHtml(col(e, 'source'))}</span></div>` : ''}
+        ${(fi.source ?? col(e, 'source')) ? `<div class="stat-row"><span class="ico">⌕</span><span class="k">Fuente:</span><span class="v">${escapeHtml(fi.source ?? col(e, 'source'))}</span></div>` : ''}
       </div>
-      ${col(e, 'description') ? `<p class="detail__desc">${escapeHtml(col(e, 'description'))}</p>` : ''}
+      ${(fi.description ?? col(e, 'description')) ? `<p class="detail__desc">${escapeHtml(fi.description ?? col(e, 'description'))}</p>` : ''}
       ${e.notes ? `<p class="detail__desc" style="font-style:normal">📝 ${escapeHtml(e.notes)}</p>` : ''}
       <h3 class="detail__section-title">Encantamientos</h3>
       <div class="ench-slots" id="ench-slots"></div>
@@ -343,6 +382,9 @@ export async function mount(el, ctx) {
       </div>`;
 
     renderEnchSlots(e);
+    const closeBtn = $('#detail-close');
+    closeBtn.classList.toggle('hidden', innerWidth > 1100);
+    closeBtn.onclick = () => $('#detail').classList.remove('open');
     $('#btn-fav').onclick = () => patch(e, { is_favorite: e.is_favorite ? 0 : 1 });
     $('#btn-dup').onclick = async () => {
       await api.post(`/api/inventory/${e.id}/duplicate`);
@@ -361,6 +403,14 @@ export async function mount(el, ctx) {
   }
 
   function safeJson(v) { if (Array.isArray(v)) return v; try { return JSON.parse(v || '[]'); } catch { return []; } }
+
+  /** Ficha completa del ítem desde catálogo (pasivos, ubicaciones, descripción…). */
+  async function ensureItem(itemId) {
+    if (!itemId || state.itemsById.has(itemId)) return;
+    try { state.itemsById.set(itemId, await api.get(`/api/items/${itemId}`)); }
+    catch { state.itemsById.set(itemId, null); }
+  }
+  const fullItem = (e) => state.itemsById.get(entryItem(e).id) || {};
 
   // ---- encantamientos: 3 rombos + picker ----
   function enchOptionsFor(e) {
@@ -472,7 +522,7 @@ export async function mount(el, ctx) {
           const loc = box.querySelector('#f-loc').value.trim();
           await patch(e, patchBody);
           if (loc !== (col(e, 'localized_name') || '')) {
-            await api.patch(`/api/items/${entryItem(e).id}`, { localized_name: loc || null }).catch(() => {});
+            await api.patch(`/api/items/${entryItem(e).id}`, { localizedName: loc || null }).catch(() => {});
           }
         },
       }],
@@ -482,7 +532,7 @@ export async function mount(el, ctx) {
   // ---- añadir copia desde catálogo ----
   async function openAddEntry() {
     const cat = await api.get('/api/items?pageSize=500');
-    const items = cat.rows || cat.items || cat || [];
+    const items = cat.rows || cat.data || cat.items || cat || [];
     const box = document.createElement('div');
     box.innerHTML = `
       <input class="mc-input" id="pk-search" placeholder="Buscar en el catálogo…" style="margin-bottom:10px">
@@ -498,7 +548,7 @@ export async function mount(el, ctx) {
           ? `<img src="${it.image_path || it.imagePath}" alt="${escapeHtml(it.name)}" loading="lazy">`
           : `<div class="mc-img-missing">${escapeHtml(it.name[0])}</div>`;
         d.onclick = async () => {
-          await api.post('/api/inventory', { item_id: it.id, quantity: 1 });
+          await api.post('/api/inventory', { itemId: it.id, quantity: 1 });
           toast(`${it.name} añadido`, 'success');
           document.querySelector('.mc-overlay')?.remove();
           reload();
@@ -516,8 +566,7 @@ export async function mount(el, ctx) {
 
   // ---------- ciclo ----------
   async function patch(e, body) {
-    await api.patch(`/api/inventory/${e.id}`, body);
-    Object.assign(e, body);
+    await api.patch(`/api/inventory/${e.id}`, toApiPatch(body));
     reload(false);
     bus.emit('data:changed');
   }
@@ -528,7 +577,7 @@ export async function mount(el, ctx) {
       api.get('/api/inventory?pageSize=500'),
       api.get('/api/profile').catch(() => state.profile),
     ]);
-    state.entries = inv.rows || inv.items || inv || [];
+    state.entries = (inv.rows || inv.data || inv.items || inv || []).map(normEntry);
     state.profile = profile;
     state.selectedId = prev && state.entries.find((e) => e.id === prev) ? prev : state.entries[0]?.id;
     renderAll();

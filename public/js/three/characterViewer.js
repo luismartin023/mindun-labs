@@ -97,6 +97,7 @@ export function createCharacterViewer(container, opts = {}) {
 
 	function buildScene(THREE, renderer) {
 		const canvas = renderer.domElement;
+		st.renderer = renderer;
 		st.canvas = canvas;
 
 		renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));

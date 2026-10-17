@@ -11,7 +11,9 @@
     "test": "node --test tests/",
     "start": "node server/index.js",
     "seed": "node scripts/seed-db.mjs",
-    "extract": "node scripts/extract-wiki.mjs && node scripts/fetch-missing-images.mjs"
+    "extract": "node scripts/extract-wiki.mjs && node scripts/fetch-missing-images.mjs",
+    "demo": "node scripts/seed-demo.mjs",
+    "demo:clear": "node scripts/seed-demo.mjs --clear"
   },
   "keywords": [],
   "type": "module",
