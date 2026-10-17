@@ -24,6 +24,15 @@ npm start            # servidor en http://localhost:4321
 > Si partes de un clone limpio, copia la carpeta `DATA/` (páginas wiki) un nivel
 > arriba y ejecuta `npm run extract` antes de `npm run seed`.
 
+### Datos de demostración (opcional)
+
+```bash
+npm run demo         # 17 copias DEMO marcadas (source='demo') para ver la UI
+npm run demo:clear   # las elimina sin tocar el resto
+```
+
+Las copias demo llevan la etiqueta «DEMO — datos de demostración» en la ficha.
+
 ## Estructura
 
 ```
@@ -71,7 +80,26 @@ detección de conflictos y deshacer.
 | `npm start` | Servidor en `:4321` |
 | `npm run seed` | (Re)cargar catálogo en la DB |
 | `npm run extract` | Regenerar seed JSON + imágenes desde `../DATA` |
-| `npm test` | Tests de dominio |
+| `npm run demo` / `demo:clear` | Añadir / quitar copias de demostración |
+| `npm test` | Tests de dominio (50 pruebas) |
+
+## Atajos y accesibilidad
+
+- **Ctrl/Cmd + K** — búsqueda global de ítems (flechas + Enter para saltar).
+- **Esc** — cierra modales, drawer de detalle y la paleta.
+- Toda la interacción es alcanzable por teclado (tarjetas, slots, tier lists
+  con alternativa a drag&drop); `prefers-reduced-motion` detiene la animación 3D.
+
+## Notas de arquitectura
+
+- **DDD/SOLID**: `server/domain/` contiene lógica pura y testeada (filtros,
+  validación, motor de puntuación, generador) sin dependencias de Express ni
+  SQLite; los servicios la componen y la API solo traduce HTTP.
+- **Persistencia**: SQLite local como fuente de verdad (en vez de IndexedDB —
+  permite exportaciones del lado del servidor y copias de seguridad
+  atómicas); preferencias de UI en `localStorage`.
+- **Búsqueda**: por nombre EN/ES, alias, ID interno, efectos, etiquetas y
+  encantamientos fijos.
 
 ## Licencias de recursos
 
