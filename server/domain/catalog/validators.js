@@ -76,14 +76,34 @@ export function validateInventoryEntry(data = {}) {
   const errors = [];
   const warnings = [];
   if (!isText(data.itemId)) errors.push('itemId: obligatorio');
-  if (data.quantity != null && (!isInt(data.quantity) || data.quantity < 0)) {
-    errors.push('quantity: debe ser un entero >= 0');
+  if (data.quantity != null && (!isInt(data.quantity) || data.quantity < 1)) {
+    errors.push('quantity: debe ser un entero >= 1');
   }
   if (data.selectedEnchantIds != null) {
     if (!Array.isArray(data.selectedEnchantIds)) {
       errors.push('selectedEnchantIds: debe ser un array');
     } else if (data.selectedEnchantIds.length > ENCHANT_SLOTS_MAX) {
       errors.push(`selectedEnchantIds: máximo ${ENCHANT_SLOTS_MAX} encantamientos`);
+    } else if (data.selectedEnchantIds.some((id) => id != null && !isText(id))) {
+      errors.push('selectedEnchantIds: cada espacio debe contener un id o null');
+    }
+  }
+  if (data.enchantTiers != null) {
+    if (!Array.isArray(data.enchantTiers)) {
+      errors.push('enchantTiers: debe ser un array');
+    } else {
+      const seen = new Set();
+      for (const tier of data.enchantTiers) {
+        if (!isText(tier?.enchantmentId) || !isInt(tier?.tier) || tier.tier < 1 || tier.tier > 4) {
+          errors.push('enchantTiers: cada nivel requiere enchantmentId y tier entero 1-4');
+          break;
+        }
+        if (seen.has(tier.enchantmentId)) {
+          errors.push(`enchantTiers: nivel duplicado para ${tier.enchantmentId}`);
+          break;
+        }
+        seen.add(tier.enchantmentId);
+      }
     }
   }
   if (data.powerLevel != null && (!isInt(data.powerLevel) || data.powerLevel < 1 || data.powerLevel > 300)) {
@@ -127,6 +147,31 @@ export function validateBuild(data = {}) {
         if (!Array.isArray(v)) errors.push(`enchantChoices["${k}"]: debe ser un array`);
         else if (v.length > ENCHANT_SLOTS_MAX) {
           errors.push(`enchantChoices["${k}"]: máximo ${ENCHANT_SLOTS_MAX} encantamientos`);
+        }
+      }
+    }
+  }
+  const tiers = data.enchantTiers;
+  if (tiers != null) {
+    if (typeof tiers !== 'object' || Array.isArray(tiers)) {
+      errors.push('enchantTiers: debe ser un objeto itemId → array de niveles');
+    } else {
+      for (const [itemId, values] of Object.entries(tiers)) {
+        if (!Array.isArray(values)) {
+          errors.push(`enchantTiers["${itemId}"]: debe ser un array`);
+          continue;
+        }
+        const seen = new Set();
+        for (const tier of values) {
+          if (!isText(tier?.enchantmentId) || !isInt(tier?.tier) || tier.tier < 1 || tier.tier > 4) {
+            errors.push(`enchantTiers["${itemId}"]: cada nivel requiere enchantmentId y tier entero 1-4`);
+            break;
+          }
+          if (seen.has(tier.enchantmentId)) {
+            errors.push(`enchantTiers["${itemId}"]: nivel duplicado para ${tier.enchantmentId}`);
+            break;
+          }
+          seen.add(tier.enchantmentId);
         }
       }
     }

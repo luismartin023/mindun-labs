@@ -3,8 +3,18 @@
  * Apila en #modal-root; Esc cierra la superior; focus trap ligero con Tab.
  */
 import { escapeHtml } from '../app.js';
+import { toast } from './toast.js';
 
 const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+const modalStack = [];
+
+function closeAllModals() {
+  while (modalStack.length) modalStack[modalStack.length - 1].close();
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('mindun:routechange', closeAllModals);
+}
 
 /**
  * @param {object} opts
@@ -21,6 +31,7 @@ const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabi
  */
 export function openModal({ title = '', body, actions = [], wide = false, dismissOnOverlay = true, onClose } = {}) {
   const host = document.getElementById('modal-root') || document.body;
+  const previousFocus = document.activeElement;
 
   const overlay = document.createElement('div');
   overlay.className = 'mc-overlay';
@@ -64,10 +75,22 @@ export function openModal({ title = '', body, actions = [], wide = false, dismis
       b.className = `mc-btn${a.kind ? ` mc-btn--${a.kind}` : ''}`;
       b.innerHTML = escapeHtml(a.label);
       b.addEventListener('click', async () => {
+        if (b.disabled) return;
+        b.disabled = true;
+        b.setAttribute('aria-busy', 'true');
         let r;
-        try { r = await a.onClick?.({ close: api.close, el: modal, body: bodyEl, btn: b }); }
-        catch (err) { console.error(err); r = false; }
-        if (r !== false && a.closeOnClick !== false) api.close();
+        try {
+          r = await a.onClick?.({ close: api.close, el: modal, body: bodyEl, btn: b });
+          if (r !== false && a.closeOnClick !== false) api.close();
+        } catch (err) {
+          console.error(err);
+          toast.error(err?.message || 'No se pudo completar esta acción.');
+        } finally {
+          if (b.isConnected) {
+            b.disabled = false;
+            b.removeAttribute('aria-busy');
+          }
+        }
       });
       foot.appendChild(b);
     }
@@ -103,16 +126,20 @@ export function openModal({ title = '', body, actions = [], wide = false, dismis
     el: modal,
     body: bodyEl,
     close() {
-      if (!overlay.isConnected) return;
       document.removeEventListener('keydown', onKeydown, true);
+      const index = modalStack.indexOf(api);
+      if (index !== -1) modalStack.splice(index, 1);
+      if (!overlay.isConnected) return;
       overlay.remove();
       try { onClose?.(); } catch { /* noop */ }
+      if (previousFocus?.isConnected && typeof previousFocus.focus === 'function') previousFocus.focus();
     },
   };
 
   document.addEventListener('keydown', onKeydown, true);
-  overlay.addEventListener('mousedown', onOverlayDown);
+  overlay.addEventListener('pointerdown', onOverlayDown);
   host.appendChild(overlay);
+  modalStack.push(api);
 
   // Foco inicial: primer campo del cuerpo, si no, el botón de cerrar.
   requestAnimationFrame(() => {

@@ -9,7 +9,7 @@ import { bus, escapeHtml } from '../app.js';
 import { openModal } from './modal.js';
 import { toast } from './toast.js';
 import { enchantSlotsEditor, compatibleEnchantments, acceptsEnchants, enchantDropdown, slotOptionsFor } from './enchantSlots.js';
-import { asList, categoryLabel, itemTitle, numOrNull, splitList, RARITY_LABELS } from './format.js';
+import { categoryLabel, itemTitle, numOrNull, splitList, RARITY_LABELS } from './format.js';
 
 const CATEGORIES = ['melee_weapon', 'ranged_weapon', 'armor', 'artifact'];
 const RARITIES = ['common', 'rare', 'unique', 'gilded', 'special', 'unknown'];
@@ -65,13 +65,13 @@ export async function itemFormModal({ api, item, entry, onSaved } = {}) {
   const editCatalog = isCreate || Boolean(item);
   const editEntry = Boolean(entry) || isCreate; // en modo crear la sección se activa por checkbox
 
-  // Encantamientos para el editor de espacios (solo si hay copia y es equipo)
+  // En creación la categoría todavía puede cambiar; se cargan las opciones para el editor.
   let enchMap = {};
-  const needsEnch = editEntry && Boolean(entry || theItem) && acceptsEnchants(theItem?.category);
+  const needsEnch = editEntry && (isCreate || acceptsEnchants(theItem?.category));
   if (needsEnch) {
     try {
       enchMap = Object.fromEntries(
-        asList(await api.get('/api/enchantments?pageSize=2000')).map((e) => [e.id, e]));
+        (await api.getAll('/api/enchantments')).map((e) => [e.id, e]));
     } catch { enchMap = {}; }
   }
 
@@ -135,8 +135,25 @@ export async function itemFormModal({ api, item, entry, onSaved } = {}) {
   const entInputs = {};
   const entrySection = document.createElement('div');
   let addCopyCheck = null;
+  let catalogItemCreated = false;
+
+  function entryDraftSnapshot() {
+    return {
+      quantity: entInputs.quantity?.value,
+      powerLevel: entInputs.powerLevel?.value,
+      itemLevel: entInputs.itemLevel?.value,
+      isFavorite: entInputs.isFavorite?.checked,
+      isGilded: entInputs.isGilded?.checked,
+      notes: entInputs.notes?.value,
+      source: entInputs.source?.value,
+      selectedEnchantIds: entInputs.selectedEnchantIds,
+      enchantTiers: entInputs.enchantTiers,
+      gildedEnchantmentId: entInputs.gildedEnchantmentId,
+    };
+  }
 
   function buildEntrySection() {
+    const previous = entryDraftSnapshot();
     entrySection.innerHTML = '';
     const h = document.createElement('h3');
     h.className = 'pixel-sm muted';
@@ -144,19 +161,20 @@ export async function itemFormModal({ api, item, entry, onSaved } = {}) {
     h.textContent = entry ? `Mi copia · ${itemTitle(theItem)}` : 'Copia en mi inventario';
     entrySection.appendChild(h);
 
-    entInputs.quantity = inputEl(entry?.quantity ?? 1, 'number');
-    entInputs.quantity.min = '0';
-    entInputs.powerLevel = inputEl(entry?.powerLevel ?? '', 'number');
-    entInputs.itemLevel = inputEl(entry?.itemLevel ?? '', 'number');
-    const fav = checkEl('Favorito', entry?.isFavorite);
+    entInputs.quantity = inputEl(entry?.quantity ?? previous.quantity ?? 1, 'number');
+    entInputs.quantity.min = '1';
+    entInputs.quantity.step = '1';
+    entInputs.powerLevel = inputEl(entry?.powerLevel ?? previous.powerLevel ?? '', 'number');
+    entInputs.itemLevel = inputEl(entry?.itemLevel ?? previous.itemLevel ?? '', 'number');
+    const fav = checkEl('Favorito', entry?.isFavorite ?? previous.isFavorite);
     entInputs.isFavorite = fav.input;
-    const gild = checkEl('Dorado (gilded)', entry?.isGilded);
+    const gild = checkEl('Dorado (gilded)', entry?.isGilded ?? previous.isGilded);
     entInputs.isGilded = gild.input;
     entInputs.notes = document.createElement('textarea');
     entInputs.notes.className = 'mc-textarea';
     entInputs.notes.rows = 2;
-    entInputs.notes.value = entry?.notes || '';
-    entInputs.source = inputEl(entry?.source || '');
+    entInputs.notes.value = entry?.notes || previous.notes || '';
+    entInputs.source = inputEl(entry?.source || previous.source || '');
 
     const row = document.createElement('div');
     row.className = 'row wrap';
@@ -176,22 +194,33 @@ export async function itemFormModal({ api, item, entry, onSaved } = {}) {
     entrySection.append(row, checks, field('Notas', entInputs.notes), field('Procedencia', entInputs.source));
 
     // Editor de encantamientos seleccionados (dropdown con iconos + niveles)
-    if (acceptsEnchants(theItem?.category)) {
+    const category = isCreate ? catInputs.category.value : theItem?.category;
+    if (acceptsEnchants(category)) {
       const eh = document.createElement('p');
       eh.className = 'mc-label';
       eh.textContent = 'Encantamientos elegidos';
       entrySection.appendChild(eh);
-      const slotOpts = slotOptionsFor(theItem, enchMap);
+      const itemForEnchants = { ...(theItem || {}), category };
+      const slotOpts = slotOptionsFor(itemForEnchants, enchMap);
+      const priorIds = entry?.selectedEnchantIds || previous.selectedEnchantIds || [null, null, null];
+      const validIds = priorIds.map((id, index) =>
+        slotOpts[index]?.some((option) => option.id === id) ? id : null);
+      const selectedSet = new Set(validIds.filter(Boolean));
+      const priorTiers = (entry?.enchantTiers || previous.enchantTiers || [])
+        .filter((tier) => selectedSet.has(tier.enchantmentId));
       const editor = enchantSlotsEditor({
-        item: theItem,
-        selectedIds: entry?.selectedEnchantIds || [null, null, null],
-        tiers: entry?.enchantTiers || [],
+        item: itemForEnchants,
+        selectedIds: validIds,
+        tiers: priorTiers,
         optionsBySlot: slotOpts,
-        onChange: (ids) => { entInputs.selectedEnchantIds = ids; },
+        onChange: (ids, tiers) => {
+          entInputs.selectedEnchantIds = ids;
+          entInputs.enchantTiers = tiers;
+        },
         onTiersChange: (t) => { entInputs.enchantTiers = t; },
       });
-      entInputs.selectedEnchantIds = entry?.selectedEnchantIds || [null, null, null];
-      entInputs.enchantTiers = entry?.enchantTiers || [];
+      entInputs.selectedEnchantIds = validIds;
+      entInputs.enchantTiers = priorTiers;
       entrySection.appendChild(editor);
 
       // Encantamiento dorado: dropdown con iconos (compatible o fijo)
@@ -202,9 +231,12 @@ export async function itemFormModal({ api, item, entry, onSaved } = {}) {
       gildLab.style.marginBottom = '4px';
       gildLab.textContent = 'Encantamiento dorado (solo si la copia es dorada)';
       const compat = Object.values(enchMap).length
-        ? compatibleEnchantments(Object.values(enchMap), theItem.category)
+        ? compatibleEnchantments(Object.values(enchMap), category)
         : [];
-      entInputs.gildedEnchantmentId = entry?.gildedEnchantmentId || null;
+      const gildedCandidate = entry?.gildedEnchantmentId || previous.gildedEnchantmentId || null;
+      entInputs.gildedEnchantmentId = compat.some((option) => option.id === gildedCandidate)
+        ? gildedCandidate
+        : null;
       const gildDd = enchantDropdown({
         options: compat,
         value: entInputs.gildedEnchantmentId,
@@ -216,6 +248,10 @@ export async function itemFormModal({ api, item, entry, onSaved } = {}) {
       entInputs.isGilded.addEventListener('change', syncGild);
       syncGild();
       entrySection.appendChild(gildRow);
+    } else {
+      entInputs.selectedEnchantIds = [null, null, null];
+      entInputs.enchantTiers = [];
+      entInputs.gildedEnchantmentId = null;
     }
   }
 
@@ -228,6 +264,7 @@ export async function itemFormModal({ api, item, entry, onSaved } = {}) {
     body.appendChild(c.wrap);
     buildEntrySection();
     body.appendChild(entrySection);
+    catInputs.category.addEventListener('change', buildEntrySection);
   } else if (editEntry && entry) {
     buildEntrySection();
     body.appendChild(entrySection);
@@ -255,13 +292,23 @@ export async function itemFormModal({ api, item, entry, onSaved } = {}) {
           err.textContent = 'El nombre es obligatorio.';
           return false;
         }
-        savedItem = isCreate
-          ? await api.post('/api/items', payload)
-          : await api.patch(`/api/items/${theItem.id}`, payload);
+        if (isCreate && !catalogItemCreated) {
+          savedItem = await api.post('/api/items', payload);
+          theItem = savedItem;
+          catalogItemCreated = true;
+        } else {
+          savedItem = await api.patch(`/api/items/${theItem.id}`, payload);
+          theItem = savedItem;
+        }
       }
       if (entry) {
+        const quantity = Number(entInputs.quantity.value);
+        if (!Number.isInteger(quantity) || quantity < 1) {
+          err.textContent = 'La cantidad debe ser un número entero de al menos 1.';
+          return false;
+        }
         await api.patch(`/api/inventory/${entry.id}`, {
-          quantity: Math.max(0, Number(entInputs.quantity.value) || 0),
+          quantity,
           powerLevel: numOrNull(entInputs.powerLevel.value),
           itemLevel: numOrNull(entInputs.itemLevel.value),
           isFavorite: entInputs.isFavorite.checked,
@@ -273,9 +320,14 @@ export async function itemFormModal({ api, item, entry, onSaved } = {}) {
           gildedEnchantmentId: entInputs.isGilded.checked ? (entInputs.gildedEnchantmentId || null) : null,
         });
       } else if (isCreate && addCopyCheck?.checked && savedItem?.id) {
+        const quantity = Number(entInputs.quantity.value);
+        if (!Number.isInteger(quantity) || quantity < 1) {
+          err.textContent = 'La cantidad debe ser un número entero de al menos 1.';
+          return false;
+        }
         await api.post('/api/inventory', {
           itemId: savedItem.id,
-          quantity: Math.max(0, Number(entInputs.quantity.value) || 1),
+          quantity,
           powerLevel: numOrNull(entInputs.powerLevel.value),
           itemLevel: numOrNull(entInputs.itemLevel.value),
           isFavorite: entInputs.isFavorite.checked,
@@ -291,7 +343,9 @@ export async function itemFormModal({ api, item, entry, onSaved } = {}) {
       onSaved?.(savedItem);
       return undefined; // cerrar modal
     } catch (e) {
-      err.textContent = `Error al guardar: ${e.message}`;
+      err.textContent = catalogItemCreated && addCopyCheck?.checked
+        ? `El ítem ya está en el catálogo; no se pudo guardar la copia: ${e.message}. Puedes reintentar.`
+        : `Error al guardar: ${e.message}`;
       return false;
     }
   }

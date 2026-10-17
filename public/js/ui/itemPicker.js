@@ -7,7 +7,7 @@ import { escapeHtml } from '../app.js';
 import { openModal } from './modal.js';
 import { itemCard } from './itemCard.js';
 import { emptyState } from './emptyState.js';
-import { asList, categoryLabel, itemTitle } from './format.js';
+import { categoryLabel, itemTitle } from './format.js';
 
 /**
  * @param {object} opts
@@ -51,6 +51,9 @@ export function openItemPicker({ api, category, title, excludeIds = [], onlyOwne
     grid.style.setProperty('--card-size', '62px');
     grid.style.marginTop = '12px';
     grid.style.minHeight = '90px';
+    grid.style.maxHeight = '55vh';
+    grid.style.overflowY = 'auto';
+    grid.style.overscrollBehavior = 'contain';
     grid.innerHTML = '<p class="muted">Cargando ítems…</p>';
 
     body.append(bar, grid);
@@ -71,10 +74,12 @@ export function openItemPicker({ api, category, title, excludeIds = [], onlyOwne
     }
 
     function matches(it) {
-      const s = q.trim().toLowerCase();
+      const normalize = (value) => String(value || '')
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+      const s = normalize(q.trim());
       if (!s) return true;
-      const hay = [it.name, it.localizedName, ...(it.aliases || []), ...(it.tags || [])]
-        .filter(Boolean).join(' ').toLowerCase();
+      const hay = normalize([it.name, it.localizedName, ...(it.aliases || []), ...(it.tags || [])]
+        .filter(Boolean).join(' '));
       return hay.includes(s);
     }
 
@@ -90,13 +95,26 @@ export function openItemPicker({ api, category, title, excludeIds = [], onlyOwne
         return;
       }
       for (const it of list.slice(0, 400)) {
-        grid.appendChild(itemCard({ item: it, size: 60, onClick: () => done(it) }));
+        const cell = document.createElement('div');
+        cell.className = 'item-picker-card';
+        cell.appendChild(itemCard({ item: it, onClick: () => done(it) }));
+        const name = document.createElement('span');
+        name.className = 'item-picker-card__name';
+        name.textContent = it.name || itemTitle(it);
+        cell.appendChild(name);
+        if (it.localizedName && it.localizedName !== it.name) {
+          const localized = document.createElement('span');
+          localized.className = 'item-picker-card__localized';
+          localized.textContent = it.localizedName;
+          cell.appendChild(localized);
+        }
+        grid.appendChild(cell);
       }
     }
 
-    api.get(`/api/items${qs({ category, owned: onlyOwned ? 1 : undefined, pageSize: 2000 })}`)
-      .then((res) => {
-        items = asList(res).filter((i) => !excludeIds.includes(i.id));
+    api.getAll(`/api/items${qs({ category, owned: onlyOwned ? 1 : undefined })}`)
+      .then((rows) => {
+        items = rows.filter((i) => !excludeIds.includes(i.id));
         renderGrid();
       })
       .catch((err) => {

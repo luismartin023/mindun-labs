@@ -52,15 +52,18 @@
 
   /* Tipografía */
   --font-pixel: 'Press Start 2P', 'Courier New', monospace;
-  --font-body: 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
+  --font-body: 'Segoe UI Variable', 'Trebuchet MS', sans-serif;
 
   /* Métricas */
   --card-size: 76px;
   --card-gap: 8px;
   --frame-w: 3px;
-  --radius-hard: 3px;
+  --radius-hard: 6px;
   --topbar-h: 56px;
+  --pagenav-h: 44px;
+  --mobile-nav-h: 64px;
+  --touch-target: 44px;
   --shadow-panel: 0 4px 0 rgba(0, 0, 0, 0.45), 0 10px 24px rgba(0, 0, 0, 0.35);
   --shadow-card: inset 0 0 0 1px rgba(0, 0, 0, 0.55), 0 2px 0 rgba(0, 0, 0, 0.4);
-  --dur: 120ms;
+  --dur: 160ms;
 }

@@ -4,7 +4,6 @@
  * "Sugerir" propone orden por rareza localmente y SIEMPRE pide confirmación.
  */
 import { escapeHtml } from '../app.js';
-import { qs } from '../api/client.js';
 import { openModal } from '../ui/modal.js';
 import { confirmDialog } from '../ui/confirm.js';
 import { toast } from '../ui/toast.js';
@@ -12,7 +11,7 @@ import { itemCard } from '../ui/itemCard.js';
 import { emptyState } from '../ui/emptyState.js';
 import { openItemPicker } from '../ui/itemPicker.js';
 import {
-  asList, categoryLabel, itemTitle,
+  categoryLabel, itemTitle,
   CATEGORY_LABELS, RARITY_ORDER,
 } from '../ui/format.js';
 
@@ -54,7 +53,7 @@ export async function mount(el, ctx) {
       <span class="grow"></span>
       <button class="mc-btn mc-btn--primary" id="tl-new">＋ Nueva lista</button>
     </div>
-    <div id="tl-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px"></div>`;
+    <div id="tl-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr));gap:12px"></div>`;
     wrap.querySelector('#tl-new').addEventListener('click', createListModal);
     const listEl = wrap.querySelector('#tl-list');
     if (!state.lists.length) {
@@ -202,7 +201,9 @@ export async function mount(el, ctx) {
     critI.addEventListener('input', () => { state.draft.criteria = critI.value; markDirty(); });
 
     const saveBtn = wrap.querySelector('#tl-save');
-    function markDirty() { state.dirty = true; saveBtn.disabled = false; }
+    let draftVersion = 0;
+    let saving = false;
+    function markDirty() { state.dirty = true; draftVersion += 1; saveBtn.disabled = saving; }
 
     wrap.querySelector('#tl-back').addEventListener('click', async () => {
       if (state.dirty && !(await confirmDialog({ title: 'Cambios sin guardar', message: '¿Salir y perder los cambios?', confirmLabel: 'Salir' }))) return;
@@ -228,19 +229,31 @@ export async function mount(el, ctx) {
     saveBtn.addEventListener('click', save);
 
     async function save() {
+      if (saving || !state.dirty) return;
+      saving = true;
+      const version = draftVersion;
+      const payload = {
+        name: state.draft.name,
+        criteria: state.draft.criteria || null,
+        rows: state.draft.rows,
+        entries: state.draft.entries.filter((e) => e.rowKey),
+      };
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Guardando…';
       try {
-        await api.patch(`/api/tierlists/${full.id}`, {
-          name: state.draft.name,
-          criteria: state.draft.criteria || null,
-          rows: state.draft.rows,
-          entries: state.draft.entries.filter((e) => e.rowKey),
-        });
-        state.dirty = false;
-        saveBtn.disabled = true;
-        toast.success('Tier list guardada');
+        await api.patch(`/api/tierlists/${full.id}`, payload);
+        state.dirty = draftVersion !== version;
+        toast.success(state.dirty ? 'Cambios actuales guardados; hay cambios nuevos pendientes.' : 'Tier list guardada');
         bus.emit('data:changed');
         await loadLists();
-      } catch (e) { toast.error(`No se pudo guardar: ${e.message}`); }
+      } catch (e) {
+        state.dirty = true;
+        toast.error(`No se pudo guardar: ${e.message}`);
+      } finally {
+        saving = false;
+        saveBtn.disabled = !state.dirty;
+        saveBtn.textContent = 'Guardar';
+      }
     }
 
     function entryAt(itemId) {
@@ -514,7 +527,7 @@ export async function mount(el, ctx) {
 
   async function loadLists() {
     try {
-      state.lists = asList(await api.get('/api/tierlists'));
+      state.lists = await api.getAll('/api/tierlists');
     } catch (e) {
       toast.error(`No se pudieron cargar las listas: ${e.message}`);
       state.lists = [];
@@ -524,7 +537,7 @@ export async function mount(el, ctx) {
   // arranque
   wrap.innerHTML = '<p class="muted">Cargando…</p>';
   try {
-    const items = asList(await api.get(`/api/items${qs({ pageSize: 5000 })}`));
+    const items = await api.getAll('/api/items');
     state.itemsById = Object.fromEntries(items.map((i) => [i.id, i]));
   } catch { toast.warn('Catálogo no disponible.'); }
   await loadLists();

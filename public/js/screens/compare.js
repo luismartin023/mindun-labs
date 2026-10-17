@@ -8,9 +8,10 @@ import { itemCard } from '../ui/itemCard.js';
 import { emptyState } from '../ui/emptyState.js';
 import { openItemPicker } from '../ui/itemPicker.js';
 import { openModal } from '../ui/modal.js';
+import { confirmDialog } from '../ui/confirm.js';
 import { SCORE_CRITERIA, criterionLabel } from '../ui/scoring.js';
 import {
-  asList, categoryLabel, enchantName, goalLabel, itemTitle,
+  categoryLabel, enchantName, goalLabel, itemTitle,
   rarityTag, powerText,
 } from '../ui/format.js';
 
@@ -72,10 +73,10 @@ export async function mount(el, ctx) {
   // ---------- datos ----------
   async function preload() {
     const [items, enchs, inv, builds] = await Promise.all([
-      api.get('/api/items?pageSize=5000').then(asList).catch(() => []),
-      api.get('/api/enchantments?pageSize=2000').then(asList).catch(() => []),
-      api.get('/api/inventory').then(asList).catch(() => []),
-      api.get('/api/builds').then(asList).catch(() => []),
+      api.getAll('/api/items').catch(() => []),
+      api.getAll('/api/enchantments').catch(() => []),
+      api.getAll('/api/inventory').catch(() => []),
+      api.getAll('/api/builds').catch(() => []),
     ]);
     state.itemsById = Object.fromEntries(items.map((i) => [i.id, i]));
     state.enchMap = Object.fromEntries(enchs.map((e) => [e.id, e]));
@@ -315,6 +316,13 @@ export async function mount(el, ctx) {
   function render() {
     renderPicker();
     if (state.mode === 'items') renderItemsTable(); else renderBuildsTable();
+    const valid = state.mode === 'items'
+      ? new Set(state.itemIds).size >= 2
+      : state.buildIds.length === 2
+        && state.buildIds.every((id) => id && !id.startsWith('draft:'))
+        && new Set(state.buildIds).size === 2;
+    el.querySelector('#cmp-save').disabled = !valid;
+    el.querySelector('#cmp-export').disabled = !valid;
   }
 
   // ---------- guardar / exportar ----------
@@ -337,6 +345,9 @@ export async function mount(el, ctx) {
   }
 
   async function saveComparison() {
+    const saveButton = el.querySelector('#cmp-save');
+    if (saveButton?.disabled) return;
+    if (saveButton) saveButton.disabled = true;
     try {
       const id = await ensureSaved();
       if (!id) { toast.warn('La comparación se guardó pero sin id de retorno.'); return; }
@@ -344,6 +355,15 @@ export async function mount(el, ctx) {
       bus.emit('data:changed');
       renderSaved();
     } catch (e) { toast.error(`No se pudo guardar: ${e.message}`); }
+    finally {
+      if (saveButton?.isConnected) {
+        const valid = state.mode === 'items'
+          ? new Set(state.itemIds).size >= 2
+          : state.buildIds.length === 2 && state.buildIds.every((id) => id && !id.startsWith('draft:'))
+            && new Set(state.buildIds).size === 2;
+        saveButton.disabled = !valid;
+      }
+    }
   }
 
   function exportMenu() {
@@ -368,19 +388,27 @@ export async function mount(el, ctx) {
 
   async function renderSaved() {
     let list = [];
-    try { list = asList(await api.get('/api/comparisons')); } catch { /* sin endpoint */ }
+    try { list = await api.getAll('/api/comparisons'); } catch { /* sin endpoint */ }
     savedEl.innerHTML = '';
     if (!list.length) {
       savedEl.innerHTML = '<span class="muted" style="font-size:12px">Aún no hay comparaciones guardadas.</span>';
       return;
     }
     for (const c of list.slice(0, 12)) {
-      const tag = document.createElement('span');
-      tag.className = 'mc-tag';
-      tag.style.cursor = 'pointer';
-      tag.title = 'Clic para borrar';
-      tag.innerHTML = `${escapeHtml(c.name || c.kind)} ✕`;
+      const tag = document.createElement('button');
+      tag.type = 'button';
+      tag.className = 'mc-tag cmp-saved__remove';
+      tag.title = 'Borrar comparación guardada';
+      tag.setAttribute('aria-label', `Borrar comparación ${c.name || c.kind}`);
+      tag.textContent = `${c.name || c.kind} ×`;
       tag.addEventListener('click', async () => {
+        const ok = await confirmDialog({
+          title: 'Borrar comparación',
+          message: `¿Borrar «${c.name || c.kind}»?`,
+          danger: true,
+          confirmLabel: 'Borrar',
+        });
+        if (!ok) return;
         try { await api.del(`/api/comparisons/${c.id}`); toast.success('Borrada'); bus.emit('data:changed'); renderSaved(); }
         catch (e) { toast.error(e.message); }
       });

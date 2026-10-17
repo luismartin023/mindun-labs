@@ -36,7 +36,7 @@ export function createCharacterViewer(container, opts = {}) {
 		renderer: null,
 		scene: null,
 		camera: null,
-		clock: null,
+		timer: null,
 		t: 0,
 		yaw: DEF.yaw,
 		pitch: DEF.pitch,
@@ -102,7 +102,7 @@ export function createCharacterViewer(container, opts = {}) {
 
 		renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 		renderer.shadowMap.enabled = true;
-		if ('PCFSoftShadowMap' in THREE) renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+		renderer.shadowMap.type = THREE.PCFShadowMap;
 
 		// Accesibilidad + a11y contract.
 		canvas.tabIndex = 0;
@@ -153,7 +153,8 @@ export function createCharacterViewer(container, opts = {}) {
 		st.parts = built;
 		scene.add(built.group);
 
-		st.clock = new THREE.Clock();
+		st.timer = new THREE.Timer();
+		st.timer.connect(document);
 
 		// ---------- prefers-reduced-motion ----------
 		if (typeof window.matchMedia === 'function') {
@@ -262,12 +263,13 @@ export function createCharacterViewer(container, opts = {}) {
 	}
 
 	function tick() {
-		if (st.disposed || st.lost || !st.renderer || !st.clock) {
+		if (st.disposed || st.lost || !st.renderer || !st.timer) {
 			st.running = false; st.raf = 0;
 			return;
 		}
 		st.raf = requestAnimationFrame(tick);
-		const dt = Math.min(st.clock.getDelta(), 0.05);
+		st.timer.update();
+		const dt = Math.min(st.timer.getDelta(), 0.05);
 		st.t += dt;
 		if (!st.dragging) st.yaw += AUTO_ROTATE_MAX * dt;
 		animate(st.t);
@@ -282,9 +284,9 @@ export function createCharacterViewer(container, opts = {}) {
 	}
 
 	function startLoop() {
-		if (st.running || st.disposed || st.lost || !st.renderer || !st.clock) return;
+		if (st.running || st.disposed || st.lost || !st.renderer || !st.timer) return;
 		st.running = true;
-		st.clock.getDelta(); // descarta el tiempo detenido
+		st.timer.reset();
 		st.raf = requestAnimationFrame(tick);
 	}
 
@@ -352,6 +354,8 @@ export function createCharacterViewer(container, opts = {}) {
 			st.renderer.dispose();
 			if (st.renderer.forceContextLoss) st.renderer.forceContextLoss();
 		}
+		st.timer?.dispose();
+		st.timer = null;
 		if (canvas && canvas.parentNode) canvas.parentNode.removeChild(canvas);
 		st.renderer = null;
 	}

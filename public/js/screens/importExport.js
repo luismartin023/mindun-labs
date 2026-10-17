@@ -7,7 +7,7 @@ import { toast } from '../ui/toast.js';
 import { dataTable } from '../ui/dataTable.js';
 import { restoreBackupFlow, downloadImportSchema } from '../ui/backupFlow.js';
 import {
-  asList, categoryLabel, itemTitle,
+  categoryLabel, itemTitle,
 } from '../ui/format.js';
 
 export const title = 'Importar/Exportar';
@@ -52,9 +52,9 @@ export async function mount(el, ctx) {
 
     <div class="mc-panel">
       <h3 class="pixel-sm" style="margin:0 0 8px">Subir imágenes</h3>
-      <p class="muted" style="font-size:12px;margin:0 0 8px">Los archivos suben a <code>data/images/uploads/</code> y luego se vinculan a un ítem.</p>
+      <p class="muted" style="font-size:13px;margin:0 0 8px">PNG, JPG, WebP o GIF · máximo 15 MB por imagen. Luego puedes vincular cada archivo a un ítem.</p>
       <div class="row wrap">
-        <input type="file" id="up-files" accept="image/*" multiple class="mc-input" style="max-width:280px">
+        <input type="file" id="up-files" accept=".png,.jpg,.jpeg,.webp,.gif,image/png,image/jpeg,image/webp,image/gif" multiple class="mc-input" style="max-width:280px">
         <select class="mc-select" id="up-cat" style="width:auto"></select>
         <select class="mc-select" id="up-item" style="width:auto;max-width:220px"><option value="">— Vincular a ítem (opcional) —</option></select>
         <button class="mc-btn mc-btn--primary" id="up-go">Subir</button>
@@ -101,7 +101,10 @@ export async function mount(el, ctx) {
     }
   });
 
-  $('#exp-go').addEventListener('click', async () => {
+  const exportButton = $('#exp-go');
+  exportButton.addEventListener('click', async () => {
+    if (exportButton.disabled) return;
+    exportButton.disabled = true;
     const fmt = el.querySelector('input[name="exp-fmt"]:checked')?.value || 'pdf';
     try {
       if (fmt === 'json') {
@@ -116,6 +119,7 @@ export async function mount(el, ctx) {
       }
       toast.success(`Exportado${checked.length > 1 ? 's' : ''}: ${checked.length} archivo(s)`);
     } catch (e) { toast.error(`Exportación fallida: ${e.message}`); }
+    finally { exportButton.disabled = false; }
   });
 
   // ---------- IMPORT (flujo compartido) ----------
@@ -140,23 +144,33 @@ export async function mount(el, ctx) {
   const itemSel = $('#up-item');
 
   $('#up-go').addEventListener('click', async () => {
-    const files = [...($('#up-files').files || [])];
-    if (!files.length) { toast.warn('Elige al menos un archivo de imagen.'); return; }
+    const selectedFiles = [...($('#up-files').files || [])];
+    if (!selectedFiles.length) { toast.warn('Elige al menos un archivo de imagen.'); return; }
+    const maxBytes = 15 * 1024 * 1024;
+    const files = selectedFiles.filter((file) => file.size <= maxBytes);
+    for (const file of selectedFiles.filter((f) => f.size > maxBytes)) {
+      toast.error(`«${file.name}» supera el límite de 15 MB.`);
+    }
+    if (!files.length) return;
     const btn = $('#up-go');
     btn.disabled = true;
     let ok = 0;
-    for (const f of files) {
-      try {
-        const fd = new FormData();
-        fd.append('file', f);
-        fd.append('category', catSel.value);
-        if (itemSel.value) fd.append('itemId', itemSel.value);
-        const res = await api.upload('/api/assets', fd);
-        state.uploaded.push(res?.id ? res : (res?.asset || res));
-        ok++;
-      } catch (e) { toast.error(`«${f.name}»: ${e.message}`); }
+    try {
+      for (const f of files) {
+        try {
+          const fd = new FormData();
+          fd.append('file', f);
+          fd.append('category', catSel.value);
+          if (itemSel.value) fd.append('itemId', itemSel.value);
+          const res = await api.upload('/api/assets', fd);
+          state.uploaded.push(res?.id ? res : (res?.asset || res));
+          ok++;
+        } catch (e) { toast.error(`«${f.name}»: ${e.message}`); }
+      }
+    } finally {
+      btn.disabled = false;
+      $('#up-files').value = '';
     }
-    btn.disabled = false;
     if (ok) { toast.success(`${ok} imagen(es) subida(s)`); bus.emit('data:changed'); }
     renderReview();
   });
@@ -214,7 +228,7 @@ export async function mount(el, ctx) {
 
   // catálogo para selects de vinculación
   try {
-    const items = asList(await api.get('/api/items?pageSize=5000'));
+    const items = await api.getAll('/api/items');
     state.itemsById = Object.fromEntries(items.map((i) => [i.id, i]));
     itemSel.innerHTML = '<option value="">— Vincular a ítem (opcional) —</option>' +
       items.sort((a, b) => itemTitle(a).localeCompare(itemTitle(b), 'es'))

@@ -5,8 +5,8 @@ import { J } from '../db.js';
 import { uuid, nowIso } from '../../../domain/model.js';
 
 const COLS = `id, name, goal, playstyle, melee_item_id, ranged_item_id,
-  armor_item_id, artifact_item_ids, enchant_choices, weights, score, notes,
-  is_favorite, status, created_at, updated_at`;
+  armor_item_id, artifact_item_ids, enchant_choices, enchant_tiers, weights,
+  score, notes, is_favorite, status, created_at, updated_at`;
 
 const SORTABLE = {
   name: 'name COLLATE NOCASE',
@@ -29,6 +29,7 @@ export function rowToBuild(r) {
     armorItemId: r.armor_item_id ?? null,
     artifactItemIds: J.parse(r.artifact_item_ids, [null, null, null]),
     enchantChoices: J.parse(r.enchant_choices, {}),
+    enchantTiers: J.parse(r.enchant_tiers, {}),
     weights: J.parse(r.weights, {}),
     score: J.parse(r.score, null),
     notes: r.notes ?? null,
@@ -50,6 +51,7 @@ export function buildToRow(d) {
     armor_item_id: d.armorItemId ?? null,
     artifact_item_ids: J.str(d.artifactItemIds ?? [null, null, null]),
     enchant_choices: J.str(d.enchantChoices ?? {}),
+    enchant_tiers: J.str(d.enchantTiers ?? {}),
     weights: J.str(d.weights ?? {}),
     score: d.score === undefined ? null : J.str(d.score),
     notes: d.notes ?? null,
@@ -66,13 +68,14 @@ export function createBuildRepository(db) {
   const stmtById = db.prepare(`SELECT ${COLS} FROM builds WHERE id = ?`);
   const stmtInsert = db.prepare(`INSERT INTO builds (${COLS}) VALUES (
     @id, @name, @goal, @playstyle, @melee_item_id, @ranged_item_id,
-    @armor_item_id, @artifact_item_ids, @enchant_choices, @weights, @score,
-    @notes, @is_favorite, @status, @created_at, @updated_at)`);
+    @armor_item_id, @artifact_item_ids, @enchant_choices, @enchant_tiers,
+    @weights, @score, @notes, @is_favorite, @status, @created_at, @updated_at)`);
   const stmtUpdate = db.prepare(`UPDATE builds SET
     name = @name, goal = @goal, playstyle = @playstyle,
     melee_item_id = @melee_item_id, ranged_item_id = @ranged_item_id,
     armor_item_id = @armor_item_id, artifact_item_ids = @artifact_item_ids,
-    enchant_choices = @enchant_choices, weights = @weights, score = @score,
+    enchant_choices = @enchant_choices, enchant_tiers = @enchant_tiers,
+    weights = @weights, score = @score,
     notes = @notes, is_favorite = @is_favorite, status = @status,
     updated_at = @updated_at
     WHERE id = @id`);

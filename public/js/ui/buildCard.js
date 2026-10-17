@@ -21,7 +21,7 @@ function emptySlot(label, size) {
   d.title = `${label}: sin asignar`;
   const s = document.createElement('span');
   s.className = 'muted pixel-sm';
-  s.style.fontSize = '7px';
+  s.style.fontSize = '11px';
   s.textContent = '?';
   d.appendChild(s);
   return d;

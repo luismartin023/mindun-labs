@@ -4,7 +4,6 @@
  * (persistida en prefs), detalle en modal y alta de ítems.
  */
 import { escapeHtml, savePrefs } from '../app.js';
-import { qs } from '../api/client.js';
 import { openModal } from '../ui/modal.js';
 import { toast } from '../ui/toast.js';
 import { itemCard } from '../ui/itemCard.js';
@@ -12,7 +11,7 @@ import { itemFormModal } from '../ui/itemForm.js';
 import { dataTable } from '../ui/dataTable.js';
 import { emptyState } from '../ui/emptyState.js';
 import {
-  asList, categoryLabel, enchantName, fmtDate, itemTitle,
+  categoryLabel, enchantName, fmtDate, itemTitle,
   rarityTag, statRow, statusLabel, tagsHtml,
   CATEGORY_LABELS, RARITY_ORDER,
 } from '../ui/format.js';
@@ -78,8 +77,8 @@ export async function mount(el, ctx) {
     b.className = 'mc-iconbtn';
     b.style.width = 'auto';
     b.style.padding = '0 10px';
-    b.style.fontSize = '8px';
-    b.style.fontFamily = 'var(--font-pixel)';
+    b.style.fontSize = '12px';
+    b.style.fontFamily = 'var(--font-body)';
     b.dataset.cat = c;
     b.innerHTML = escapeHtml(CAT_LABELS[c]);
     b.addEventListener('click', () => {
@@ -136,7 +135,7 @@ export async function mount(el, ctx) {
     if (!state.enchMap) {
       try {
         state.enchMap = Object.fromEntries(
-          asList(await api.get('/api/enchantments?pageSize=2000')).map((e) => [e.id, e]));
+          (await api.getAll('/api/enchantments')).map((e) => [e.id, e]));
       } catch { state.enchMap = {}; }
     }
     return state.enchMap;
@@ -363,7 +362,7 @@ export async function mount(el, ctx) {
   async function load() {
     content.innerHTML = '<p class="muted">Cargando catálogo…</p>';
     try {
-      state.items = asList(await api.get(`/api/items${qs({ pageSize: 5000 })}`));
+      state.items = await api.getAll('/api/items');
     } catch (e) {
       content.innerHTML = '';
       content.appendChild(emptyState({

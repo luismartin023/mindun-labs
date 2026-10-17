@@ -9,7 +9,7 @@ import { toast } from '../ui/toast.js';
 import { dataTable } from '../ui/dataTable.js';
 import { emptyState } from '../ui/emptyState.js';
 import {
-  asList, categoryLabel, fmtDate, goalLabel, itemTitle, rarityTag,
+  categoryLabel, fmtDate, goalLabel, itemTitle, rarityTag,
   statusLabel, enchantName,
 } from '../ui/format.js';
 
@@ -27,7 +27,7 @@ function dsInventory(itemsById) {
   return {
     label: 'Inventario',
     exportType: 'inventory',
-    fetch: async (api) => asList(await api.get('/api/inventory?pageSize=5000'))
+    fetch: async (api) => api.getAll('/api/inventory')
       .map((e) => ({ ...e, item: itemsById[e.itemId] })),
     columns: [
       { key: '_img', label: '', sortable: false, width: '42px', render: (r) => r.item?.imagePath ? `<img class="cell-img" src="${escapeHtml(r.item.imagePath)}" alt="">` : '<span class="muted">·</span>', searchText: () => '' },
@@ -49,7 +49,7 @@ const DATASETS = (itemsById, enchMap) => ({
   catalog: {
     label: 'Catálogo',
     exportType: 'catalog',
-    fetch: async (api) => asList(await api.get('/api/items?pageSize=5000')),
+    fetch: async (api) => api.getAll('/api/items'),
     columns: [
       imgCol,
       { key: 'name', label: 'Nombre', render: (r) => escapeHtml(itemTitle(r)) },
@@ -64,7 +64,7 @@ const DATASETS = (itemsById, enchMap) => ({
   enchantments: {
     label: 'Encantamientos',
     exportType: 'enchantments',
-    fetch: async (api) => asList(await api.get('/api/enchantments?pageSize=5000')),
+    fetch: async (api) => api.getAll('/api/enchantments'),
     columns: [
       imgCol,
       { key: 'name', label: 'Nombre', render: (r) => escapeHtml(enchantName(r)) },
@@ -77,7 +77,7 @@ const DATASETS = (itemsById, enchMap) => ({
   builds: {
     label: 'Builds',
     exportType: 'builds',
-    fetch: async (api) => asList(await api.get('/api/builds?pageSize=5000')),
+    fetch: async (api) => api.getAll('/api/builds'),
     columns: [
       { key: 'name', label: 'Nombre', render: (r) => escapeHtml(r.name || '') },
       { key: 'goal', label: 'Objetivo', render: (r) => r.goal ? `<span class="mc-tag">${escapeHtml(goalLabel(r.goal))}</span>` : '<span class="muted">—</span>' },
@@ -90,7 +90,7 @@ const DATASETS = (itemsById, enchMap) => ({
   tierlists: {
     label: 'Tier lists',
     exportType: 'tierlists',
-    fetch: async (api) => asList(await api.get('/api/tierlists?pageSize=5000')),
+    fetch: async (api) => api.getAll('/api/tierlists'),
     columns: [
       { key: 'name', label: 'Nombre', render: (r) => escapeHtml(r.name || '') },
       { key: 'category', label: 'Categoría', render: (r) => escapeHtml(categoryLabel(r.category)) },
@@ -143,8 +143,8 @@ export async function mount(el, ctx) {
   // precargar catálogo + encantamientos ANTES de construir datasets (joins)
   try {
     const [items, enchs] = await Promise.all([
-      api.get('/api/items?pageSize=5000').then(asList).catch(() => []),
-      api.get('/api/enchantments?pageSize=2000').then(asList).catch(() => []),
+      api.getAll('/api/items').catch(() => []),
+      api.getAll('/api/enchantments').catch(() => []),
     ]);
     state.itemsById = Object.fromEntries(items.map((i) => [i.id, i]));
     state.enchMap = Object.fromEntries(enchs.map((e) => [e.id, e]));
@@ -187,7 +187,7 @@ export async function mount(el, ctx) {
   // vistas guardadas
   async function loadViews() {
     try {
-      state.views = asList(await api.get('/api/table-views'));
+      state.views = await api.getAll('/api/table-views');
     } catch { state.views = []; }
     const sel = $('#views-sel');
     sel.innerHTML = '<option value="">— Vistas guardadas —</option>';

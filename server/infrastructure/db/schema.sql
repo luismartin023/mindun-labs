@@ -47,7 +47,7 @@ CREATE INDEX IF NOT EXISTS idx_items_name ON items(name);
 CREATE TABLE IF NOT EXISTS inventory_entries (
   id                 TEXT PRIMARY KEY,
   item_id            TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
-  quantity           INTEGER NOT NULL DEFAULT 1 CHECK (quantity >= 0),
+  quantity           INTEGER NOT NULL DEFAULT 1 CHECK (quantity >= 1),
   power_level        INTEGER,
   item_level         INTEGER,
   is_favorite        INTEGER NOT NULL DEFAULT 0,

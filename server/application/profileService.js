@@ -20,8 +20,14 @@ export function createProfileService({ profileRepo }) {
       if (clean.power !== undefined && clean.power !== null && Number(clean.power) < 0) {
         throw badRequest('power no puede ser negativo');
       }
-      if (clean.prefs !== undefined && (typeof clean.prefs !== 'object' || clean.prefs === null)) {
+      if (clean.prefs !== undefined && (
+        typeof clean.prefs !== 'object' || clean.prefs === null || Array.isArray(clean.prefs)
+      )) {
         throw badRequest('prefs debe ser un objeto');
+      }
+      if (clean.prefs !== undefined) {
+        const current = profileRepo.ensure();
+        clean.prefs = { ...(current.prefs || {}), ...clean.prefs };
       }
       return profileRepo.update(clean);
     },

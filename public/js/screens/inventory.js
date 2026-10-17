@@ -2,10 +2,14 @@
  * screens/inventory.js — Pantalla principal: layout 3 zonas de la captura
  * (personaje | cuadrícula | detalle), filtros, copias, encantamientos.
  */
-import { api, qs } from '../api/client.js';
 import { escapeHtml } from '../app.js';
 import { createCharacterViewer } from '../three/characterViewer.js';
+import { confirmDialog } from '../ui/confirm.js';
 import { enchantSlotsEditor, enchantDropdown, acceptsEnchants } from '../ui/enchantSlots.js';
+import { openItemPicker } from '../ui/itemPicker.js';
+import { openModal } from '../ui/modal.js';
+import { toast } from '../ui/toast.js';
+import { itemTitle } from '../ui/format.js';
 
 export const title = 'Inventario';
 
@@ -28,13 +32,18 @@ const CAT_ORDER = [
 const RARITY_LABEL = { common: 'COMÚN', rare: 'RARO', unique: 'ÚNICO', gilded: 'DORADO', special: 'ESPECIAL', unknown: 'DESCONOCIDA' };
 const CAT_LABEL = { melee_weapon: 'Cuerpo a cuerpo', ranged_weapon: 'A distancia', armor: 'Armadura', artifact: 'Artefacto', enchantment: 'Encantamiento' };
 const TYPE_FOR_ENCH = { melee_weapon: ['melee', 'universal'], ranged_weapon: ['ranged', 'universal'], armor: ['armor', 'universal'] };
+const EQUIP_SLOT_CATEGORIES = Object.freeze({
+  melee: 'melee_weapon', ranged: 'ranged_weapon', armor: 'armor',
+  art1: 'artifact', art2: 'artifact', art3: 'artifact',
+});
 
 export async function mount(el, ctx) {
-  const { bus } = ctx;
+  const { api, bus, signal } = ctx;
   const state = {
     entries: [], enchants: [], meta: null, profile: null,
     itemsById: new Map(),
     selectedId: null, filters: { category: null, search: '', sort: 'power-desc' },
+    prefs: { ...(ctx.prefs || {}) },
     viewer: null,
   };
 
@@ -75,61 +84,19 @@ export async function mount(el, ctx) {
       <aside class="zone-detail" id="detail" aria-live="polite"></aside>
     </section>`;
 
-  // ---------- helpers locales (independientes de ui/* para no acoplar) ----------
+  // ---------- helpers locales ----------
   const $ = (s) => el.querySelector(s);
-  const modalRoot = document.getElementById('modal-root');
-  function toast(msg, kind = 'info') {
-    const t = document.createElement('div');
-    t.className = `toast toast--${kind}`;
-    t.textContent = msg;
-    document.getElementById('toasts').appendChild(t);
-    setTimeout(() => t.remove(), 3400);
-  }
-  function openModal({ title: t, body, actions = [] }) {
-    modalRoot.innerHTML = `<div class="mc-overlay"><div class="mc-modal" role="dialog" aria-modal="true" aria-label="${escapeHtml(t)}">
-      <div class="mc-modal__head"><h2 class="pixel">${escapeHtml(t)}</h2>
-      <button class="mc-iconbtn" data-close aria-label="Cerrar">✕</button></div>
-      <div class="mc-modal__body"></div><div class="mc-modal__foot"></div></div></div>`;
-    const overlay = modalRoot.firstElementChild;
-    const bodyEl = overlay.querySelector('.mc-modal__body');
-    const footEl = overlay.querySelector('.mc-modal__foot');
-    bodyEl.append(body);
-    const close = () => overlay.remove();
-    overlay.querySelector('[data-close]').onclick = close;
-    overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) close(); });
-    for (const a of actions) {
-      const b = document.createElement('button');
-      b.className = `mc-btn ${a.kind ? `mc-btn--${a.kind}` : ''}`;
-      b.textContent = a.label;
-      b.onclick = async () => { const r = await a.onClick?.(); if (r !== false) close(); };
-      footEl.append(b);
-    }
-    const esc = (e) => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', esc); } };
-    document.addEventListener('keydown', esc);
-    return { close };
-  }
-  const confirmDlg = (title, msg) => new Promise((resolve) => {
-    const box = document.createElement('div');
-    box.innerHTML = `<p>${escapeHtml(msg)}</p>`;
-    openModal({
-      title, body: box,
-      actions: [
-        { label: 'Cancelar', kind: 'ghost', onClick: () => { resolve(false); } },
-        { label: 'Confirmar', kind: 'danger', onClick: () => { resolve(true); } },
-      ],
-    });
-  });
 
   // ---------- carga ----------
   async function loadAll() {
     const [inv, ench, meta, profile] = await Promise.all([
-      api.get('/api/inventory?pageSize=500'),
-      api.get('/api/enchantments?pageSize=500'),
+      api.getAll('/api/inventory'),
+      api.getAll('/api/enchantments'),
       api.get('/api/meta').catch(() => null),
       api.get('/api/profile').catch(() => null),
     ]);
-    state.entries = (inv.rows || inv.data || inv.items || inv || []).map(normEntry);
-    state.enchants = ench.rows || ench.data || ench.items || ench || [];
+    state.entries = inv.map(normEntry);
+    state.enchants = ench;
     state.meta = meta;
     state.profile = profile;
     if (!state.entries.length) renderEmpty();
@@ -190,11 +157,11 @@ export async function mount(el, ctx) {
     if (!state.viewer) {
       try {
         state.viewer = createCharacterViewer($('#char-stage'), {
-          paused: ctx.prefs?.motion3d === false,
+          paused: state.prefs.motion3d === false,
         });
-        window.__viewer = state.viewer;
       } catch { $('#char-stage').classList.add('no-webgl'); }
     }
+    state.viewer?.setPaused(state.prefs.motion3d === false);
     renderEquip();
   }
 
@@ -203,20 +170,27 @@ export async function mount(el, ctx) {
     $('#equip-top').innerHTML = '';
     $('#equip-bottom').innerHTML = '';
     const slots = [
-      { key: 'melee', label: 'Cuerpo a cuerpo', zone: 'top' },
-      { key: 'ranged', label: 'A distancia', zone: 'top' },
-      { key: 'armor', label: 'Armadura', zone: 'top' },
-      { key: 'art1', label: 'Artefacto 1', zone: 'bottom' },
-      { key: 'art2', label: 'Artefacto 2', zone: 'bottom' },
-      { key: 'art3', label: 'Artefacto 3', zone: 'bottom' },
+      { key: 'melee', label: 'Cuerpo a cuerpo', category: 'melee_weapon', zone: 'top' },
+      { key: 'ranged', label: 'A distancia', category: 'ranged_weapon', zone: 'top' },
+      { key: 'armor', label: 'Armadura', category: 'armor', zone: 'top' },
+      { key: 'art1', label: 'Artefacto 1', category: 'artifact', zone: 'bottom' },
+      { key: 'art2', label: 'Artefacto 2', category: 'artifact', zone: 'bottom' },
+      { key: 'art3', label: 'Artefacto 3', category: 'artifact', zone: 'bottom' },
     ];
     for (const s of slots) {
       const host = s.zone === 'top' ? $('#equip-top') : $('#equip-bottom');
       const entryId = eq[s.key];
-      const entry = entryId ? state.entries.find((e) => e.id === entryId) : null;
-      const div = document.createElement('div');
+      const candidate = entryId ? state.entries.find((e) => e.id === entryId) : null;
+      const entry = candidate && candidate.quantity > 0 && entryItem(candidate).category === s.category
+        ? candidate
+        : null;
+      const div = document.createElement('button');
+      div.type = 'button';
       div.className = `equip-slot ${entry ? '' : 'empty'}`;
-      div.title = `${s.label}${entry ? `: ${entryItem(entry).name}` : ' (vacío — selecciona una copia y pulsa Equipar)'}`;
+      div.title = entry ? `${s.label}: ${entryItem(entry).name}. Clic para cambiar o retirar.`
+        : `${s.label}: vacío. Clic para elegir una copia.`;
+      div.setAttribute('aria-label', div.title);
+      div.setAttribute('aria-pressed', entry ? 'true' : 'false');
       if (entry) {
         const it = entryItem(entry);
         div.innerHTML = it.imagePath
@@ -224,10 +198,108 @@ export async function mount(el, ctx) {
           : `<div class="mc-img-missing">${escapeHtml(it.name?.[0] || '?')}</div>`;
       } else {
         const short = { melee: 'Melee', ranged: 'Distancia', armor: 'Armadura', art1: 'Artef.', art2: 'Artef.', art3: 'Artef.' }[s.key] || s.label;
-        div.innerHTML = `<span class="muted pixel-sm" style="font-size:7px">${short}</span>`;
+        div.innerHTML = `<span class="muted equip-slot__label">${short}</span>`;
       }
+      div.addEventListener('click', () => openInventoryEntryPicker(s, entry, Boolean(entryId)));
       host.append(div);
     }
+  }
+
+  function openInventoryEntryPicker(slot, currentEntry, isAssigned = false) {
+    const options = state.entries.filter((entry) =>
+      entry.quantity > 0 && entryItem(entry).category === slot.category);
+    const body = document.createElement('div');
+    const search = document.createElement('input');
+    search.type = 'search';
+    search.className = 'mc-input';
+    search.placeholder = `Buscar ${slot.label.toLowerCase()}…`;
+    search.setAttribute('aria-label', `Buscar ${slot.label.toLowerCase()}`);
+    const list = document.createElement('div');
+    list.className = 'inv-pick-list';
+    const hint = document.createElement('p');
+    hint.className = 'muted';
+    hint.textContent = `${options.length} copia${options.length === 1 ? '' : 's'} compatible${options.length === 1 ? '' : 's'}`;
+    body.append(search, hint, list);
+
+    const renderOptions = () => {
+      const query = search.value.trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+      list.innerHTML = '';
+      const hits = options.filter((entry) => {
+        const item = fullItem(entry);
+        const haystack = [
+          entryItem(entry).name, item.name, item.localizedName,
+          ...(item.aliases || []), entry.power_level,
+        ].filter(Boolean).join(' ').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+        return haystack.includes(query);
+      });
+      if (!hits.length) {
+        const empty = document.createElement('p');
+        empty.className = 'muted inv-pick-list__empty';
+        empty.textContent = options.length ? 'No hay copias que coincidan.' : 'No tienes copias compatibles en el inventario.';
+        list.appendChild(empty);
+        return;
+      }
+      for (const entry of hits) {
+        const item = { ...fullItem(entry), ...entryItem(entry) };
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'inv-pick-option';
+        const image = document.createElement('span');
+        image.className = 'inv-pick-option__image';
+        if (item.imagePath) {
+          const img = document.createElement('img');
+          img.src = item.imagePath;
+          img.alt = '';
+          img.loading = 'lazy';
+          img.addEventListener('error', () => {
+            const fallback = document.createElement('span');
+            fallback.className = 'mc-img-missing';
+            fallback.textContent = item.name?.[0] || '?';
+            img.replaceWith(fallback);
+          }, { once: true });
+          image.appendChild(img);
+        } else {
+          const fallback = document.createElement('span');
+          fallback.className = 'mc-img-missing';
+          fallback.textContent = item.name?.[0] || '?';
+          image.appendChild(fallback);
+        }
+        const details = document.createElement('span');
+        details.className = 'inv-pick-option__details';
+        const name = document.createElement('strong');
+        name.textContent = item.localizedName || item.localized_name || item.name || 'Sin nombre';
+        const meta = document.createElement('span');
+        meta.textContent = `Poder ${entry.power_level ?? '—'} · Cantidad ${entry.quantity}`;
+        details.append(name, meta);
+        const badge = document.createElement('span');
+        badge.className = 'mc-tag';
+        badge.textContent = entry.id === currentEntry?.id ? 'Equipado' : 'Elegir';
+        row.append(image, details, badge);
+        row.addEventListener('click', async () => {
+          row.disabled = true;
+          const saved = await setEquipped(slot.key, entry.id);
+          if (saved) modal.close();
+          else row.disabled = false;
+        });
+        list.appendChild(row);
+      }
+    };
+    search.addEventListener('input', renderOptions);
+    renderOptions();
+
+    const modal = openModal({
+      title: `Equipar · ${slot.label}`,
+      body,
+      wide: true,
+      actions: [
+        ...(isAssigned ? [{
+          label: 'Retirar del espacio',
+          kind: 'danger',
+          onClick: () => setEquipped(slot.key, null),
+        }] : []),
+        { label: 'Cerrar', kind: 'ghost', onClick: () => {} },
+      ],
+    });
   }
 
   // ---------- barra de categorías ----------
@@ -274,6 +346,7 @@ export async function mount(el, ctx) {
     const it = entryItem(entry);
     const div = document.createElement('div');
     div.className = `mc-card rarity-${it.rarity} ${entry.id === state.selectedId ? 'selected' : ''}`;
+    div.dataset.entryId = entry.id;
     div.setAttribute('role', 'button');
     div.tabIndex = 0;
     div.title = it.name;
@@ -283,7 +356,7 @@ export async function mount(el, ctx) {
       ${sel ? `<span class="mc-card__badge">${sel}◈</span>` : ''}
       ${entry.is_favorite ? '<span class="mc-card__fav">★</span>' : ''}
       ${entry.quantity > 1 ? `<span class="mc-card__qty">×${entry.quantity}</span>` : ''}
-      ${entry.power_level != null ? `<span class="mc-card__power">⚔${entry.power_level}</span>` : ''}`;
+      ${state.prefs.showPower !== false && entry.power_level != null ? `<span class="mc-card__power">⚔${entry.power_level}</span>` : ''}`;
     div.querySelector('img')?.addEventListener('error', (e) => {
       e.target.outerHTML = `<div class="mc-img-missing">${escapeHtml(it.name?.[0] || '?')}</div>`;
     });
@@ -378,33 +451,49 @@ export async function mount(el, ctx) {
         <button class="mc-btn mc-btn--sm" id="btn-fav">${e.is_favorite ? '★ Favorito' : '☆ Favorito'}</button>
         <button class="mc-btn mc-btn--sm" id="btn-edit">Editar</button>
         <button class="mc-btn mc-btn--sm" id="btn-dup">Duplicar</button>
-        <button class="mc-btn mc-btn--sm mc-btn--danger" id="btn-del">Desarmar</button>
+        <button class="mc-btn mc-btn--sm mc-btn--danger" id="btn-del">${e.quantity > 1 ? 'Desarmar 1 unidad' : 'Desarmar copia'}</button>
+        ${e.quantity > 1 ? '<button class="mc-btn mc-btn--sm mc-btn--danger" id="btn-del-stack">Desarmar pila</button>' : ''}
       </div>
       <div class="row" style="margin-top:10px; justify-content:center">
-        <button class="mc-iconbtn" id="qty-minus" title="Quitar unidad">−</button>
+        <button class="mc-iconbtn" id="qty-minus" title="${e.quantity <= 1 ? 'La cantidad mínima es una copia' : 'Quitar una unidad'}" aria-label="${e.quantity <= 1 ? 'Cantidad mínima alcanzada' : 'Quitar una unidad'}" ${e.quantity <= 1 ? 'disabled' : ''}>−</button>
         <span class="pixel-sm">Cantidad: ${e.quantity}</span>
-        <button class="mc-iconbtn" id="qty-plus" title="Añadir unidad">＋</button>
+        <button class="mc-iconbtn" id="qty-plus" title="Añadir una unidad" aria-label="Añadir una unidad">＋</button>
       </div>`;
 
     renderEnchSlots(e);
     const closeBtn = $('#detail-close');
     closeBtn.classList.toggle('hidden', innerWidth > 1100);
     closeBtn.onclick = () => $('#detail').classList.remove('open');
-    $('#btn-fav').onclick = () => patch(e, { is_favorite: e.is_favorite ? 0 : 1 });
-    $('#btn-dup').onclick = async () => {
-      await api.post(`/api/inventory/${e.id}/duplicate`);
-      toast('Copia duplicada', 'success'); reload();
-    };
-    $('#btn-del').onclick = async () => {
-      if (await confirmDlg('Desarmar', `¿Desarmar esta copia de ${it.name}? Se eliminará del inventario.`)) {
-        await api.del(`/api/inventory/${e.id}`);
-        toast('Copia desarmada', 'success'); state.selectedId = null; reload();
-      }
-    };
+    bindBusy($('#btn-fav'), () => patch(e, { is_favorite: e.is_favorite ? 0 : 1 }));
+    bindBusy($('#btn-dup'), async () => {
+      try {
+        await api.post(`/api/inventory/${e.id}/duplicate`);
+        await refreshAfterMutation();
+        toast.success('Copia duplicada');
+      } catch (error) { toast.error(`No se pudo duplicar: ${error.message}`); }
+    });
+    bindBusy($('#btn-del'), () => dismantleEntry(e, false));
+    bindBusy($('#btn-del-stack'), () => dismantleEntry(e, true));
     $('#btn-equip').onclick = () => equipDialog(e);
     $('#btn-edit').onclick = () => editDialog(e);
-    $('#qty-minus').onclick = () => e.quantity > 1 && patch(e, { quantity: e.quantity - 1 });
-    $('#qty-plus').onclick = () => patch(e, { quantity: e.quantity + 1 });
+    bindBusy($('#qty-minus'), () => e.quantity > 1 ? patch(e, { quantity: e.quantity - 1 }) : undefined);
+    bindBusy($('#qty-plus'), () => patch(e, { quantity: e.quantity + 1 }));
+  }
+
+  function bindBusy(button, action) {
+    if (!button) return;
+    button.addEventListener('click', async () => {
+      if (button.disabled) return;
+      button.disabled = true;
+      button.setAttribute('aria-busy', 'true');
+      try { await action(); }
+      finally {
+        if (button.isConnected) {
+          button.disabled = false;
+          button.removeAttribute('aria-busy');
+        }
+      }
+    });
   }
 
   function safeJson(v) { if (Array.isArray(v)) return v; try { return JSON.parse(v || '[]'); } catch { return []; } }
@@ -441,7 +530,10 @@ export async function mount(el, ctx) {
       selectedIds: sel,
       tiers,
       optionsBySlot: [options, options, options],
-      onChange: (ids) => patch(e, { selected_enchant_ids: ids }),
+      onChange: (ids, nextTiers) => patch(e, {
+        selected_enchant_ids: ids,
+        enchant_tiers: nextTiers,
+      }),
       onTiersChange: (t) => patch(e, { enchant_tiers: t }),
     });
     host.appendChild(ed);
@@ -450,22 +542,47 @@ export async function mount(el, ctx) {
   // ---- equipar (lógico: guarda en profile.prefs.equipped) ----
   function equipDialog(e) {
     const cat = entryItem(e).category;
-    const slotKey = cat === 'melee_weapon' ? 'melee' : cat === 'ranged_weapon' ? 'ranged' : cat === 'armor' ? 'armor' : null;
+    const slot = [
+      { key: 'melee', label: 'Cuerpo a cuerpo', category: 'melee_weapon' },
+      { key: 'ranged', label: 'A distancia', category: 'ranged_weapon' },
+      { key: 'armor', label: 'Armadura', category: 'armor' },
+    ].find((s) => s.category === cat);
     const box = document.createElement('div');
-    if (slotKey) {
-      box.innerHTML = `<p>Equipar en el espacio <strong>${CAT_LABEL[cat]}</strong>:</p>`;
+    if (slot) {
+      if (e.quantity < 1) {
+        toast('No puedes equipar una copia con cantidad cero.', 'warn');
+        return;
+      }
+      box.innerHTML = `<p>Espacio: <strong>${slot.label}</strong></p>`;
       openModal({
-        title: 'Equipar', body: box,
-        actions: [{ label: 'Equipar aquí', kind: 'primary', onClick: async () => { await setEquipped(slotKey, e.id); } }],
+        title: `Equipar · ${slot.label}`,
+        body: box,
+        actions: [
+          ...(state.profile?.prefs?.equipped?.[slot.key] === e.id ? [{
+            label: 'Retirar',
+            kind: 'danger',
+            onClick: () => setEquipped(slot.key, null),
+          }] : []),
+          { label: 'Equipar aquí', kind: 'primary', onClick: () => setEquipped(slot.key, e.id) },
+          { label: 'Cancelar', kind: 'ghost', onClick: () => {} },
+        ],
       });
     } else if (cat === 'artifact') {
-      box.innerHTML = `<p>Equipar en un espacio de artefacto:</p>`;
+      if (e.quantity < 1) {
+        toast('No puedes equipar una copia con cantidad cero.', 'warn');
+        return;
+      }
+      box.innerHTML = '<p>Elige en qué espacio equipar esta copia:</p>';
       openModal({
-        title: 'Equipar artefacto', body: box,
-        actions: [1, 2, 3].map((n) => ({
-          label: `Espacio ${n}`,
-          onClick: async () => { await setEquipped(`art${n}`, e.id); },
-        })),
+        title: 'Equipar artefacto',
+        body: box,
+        actions: [
+          ...[1, 2, 3].map((n) => ({
+            label: `Espacio ${n}${state.profile?.prefs?.equipped?.[`art${n}`] === e.id ? ' · equipado' : ''}`,
+            onClick: () => setEquipped(`art${n}`, e.id),
+          })),
+          { label: 'Cancelar', kind: 'ghost', onClick: () => {} },
+        ],
       });
     } else {
       box.innerHTML = '<p>Esta categoría no es equipable.</p>';
@@ -474,11 +591,103 @@ export async function mount(el, ctx) {
   }
 
   async function setEquipped(slotKey, entryId) {
-    const prefs = { ...(state.profile?.prefs || {}) };
-    prefs.equipped = { ...(prefs.equipped || {}), [slotKey]: entryId };
-    state.profile = await api.patch('/api/profile', { prefs });
-    toast('Equipado', 'success');
-    reload(false);
+    const slotCategory = EQUIP_SLOT_CATEGORIES[slotKey];
+    if (!slotCategory) {
+      toast('El espacio de equipo no es válido.', 'error');
+      return false;
+    }
+
+    const equipped = { ...(state.profile?.prefs?.equipped || {}) };
+    if (entryId) {
+      const entry = state.entries.find((candidate) => candidate.id === entryId);
+      if (!entry || entry.quantity < 1) {
+        toast('Esta copia ya no está disponible para equipar.', 'error');
+        return false;
+      }
+      if (entryItem(entry).category !== slotCategory) {
+        toast('Esta copia no es compatible con el espacio elegido.', 'error');
+        return false;
+      }
+      Object.entries(equipped).forEach(([key, id]) => {
+        if (id === entryId && key !== slotKey && EQUIP_SLOT_CATEGORIES[key] !== slotCategory) {
+          delete equipped[key];
+        }
+      });
+      const usedElsewhere = Object.entries(equipped)
+        .filter(([key, id]) => key !== slotKey && id === entryId).length;
+      if (equipped[slotKey] !== entryId && usedElsewhere >= entry.quantity) {
+        toast(`Tienes ${entry.quantity} copia(s); retira una antes de equiparla en otro espacio.`, 'warn');
+        return false;
+      }
+      equipped[slotKey] = entryId;
+    } else {
+      delete equipped[slotKey];
+    }
+
+    try {
+      state.profile = await api.patch('/api/profile', {
+        prefs: { ...(state.profile?.prefs || {}), equipped },
+      });
+      renderEquip();
+      toast(entryId ? 'Equipo actualizado' : 'Se retiró el objeto del espacio.', 'success');
+      return true;
+    } catch (error) {
+      toast(`No se pudo actualizar el equipo: ${error.message}`, 'error');
+      return false;
+    }
+  }
+
+  async function dismantleEntry(entry, wholeStack) {
+    const quantity = Math.max(1, Math.floor(Number(entry.quantity) || 1));
+    const removeCount = wholeStack ? quantity : 1;
+    const remaining = quantity - removeCount;
+    const equipped = state.profile?.prefs?.equipped || {};
+    const equippedCount = Object.entries(equipped)
+      .filter(([slot, id]) => id === entry.id && EQUIP_SLOT_CATEGORIES[slot] === entryItem(entry).category)
+      .length;
+    const itemName = entryItem(entry).name;
+
+    if (remaining < equippedCount) {
+      toast.warn('Retira primero esta copia de los espacios de equipo.');
+      return;
+    }
+    const message = wholeStack
+      ? `Se eliminarán las ${quantity} unidades de «${itemName}». Esta acción no se puede deshacer.`
+      : quantity > 1
+        ? `Se quitará una unidad de «${itemName}». Quedarán ${remaining}.`
+        : `Se eliminará la última copia de «${itemName}».`;
+    const ok = await confirmDialog({
+      title: wholeStack ? 'Desarmar pila' : 'Desarmar una unidad',
+      message,
+      danger: true,
+      confirmLabel: wholeStack ? 'Desarmar pila' : 'Desarmar',
+    });
+    if (!ok) return;
+
+    try {
+      if (remaining > 0) {
+        await api.patch(`/api/inventory/${entry.id}`, { quantity: remaining });
+      } else {
+        await api.del(`/api/inventory/${entry.id}`);
+        state.selectedId = null;
+        const nextEquipped = Object.fromEntries(
+          Object.entries(equipped).filter(([, id]) => id !== entry.id),
+        );
+        if (Object.keys(nextEquipped).length !== Object.keys(equipped).length) {
+          try {
+            state.profile = await api.patch('/api/profile', {
+              prefs: { ...(state.profile?.prefs || {}), equipped: nextEquipped },
+            });
+          } catch {
+            toast.warn('La copia se retiró, pero no se pudieron limpiar sus espacios equipados.');
+          }
+        }
+      }
+      await refreshAfterMutation();
+      toast.success(remaining > 0 ? `Quedaron ${remaining} unidad(es).` : 'Copia desarmada.');
+    } catch (error) {
+      toast.error(`No se pudo desarmar: ${error.message}`);
+    }
   }
 
   // ---- edición rápida de la copia ----
@@ -491,13 +700,16 @@ export async function mount(el, ctx) {
       <label class="mc-label">Nivel del objeto</label>
       <input class="mc-input" id="f-level" type="number" min="1" max="300" value="${e.item_level ?? ''}">
       <label class="mc-label">Cantidad</label>
-      <input class="mc-input" id="f-qty" type="number" min="0" value="${e.quantity}">
+      <input class="mc-input" id="f-qty" type="number" min="1" step="1" value="${Math.max(1, e.quantity)}">
       <label class="mc-check"><input type="checkbox" id="f-gilded" ${e.is_gilded ? 'checked' : ''}> Objeto dorado (gilded)</label>
       <div id="f-gilded-ench" style="margin:4px 0 8px"></div>
       <label class="mc-label">Nombre en español</label>
       <input class="mc-input" id="f-loc" value="${escapeHtml(col(e, 'localized_name') || '')}" placeholder="Túnica de brasas…">
       <label class="mc-label">Notas</label>
       <textarea class="mc-textarea" id="f-notes" rows="3">${escapeHtml(e.notes || '')}</textarea>`;
+    const editError = document.createElement('p');
+    editError.className = 'mc-field-error';
+    box.appendChild(editError);
     // Encantamiento dorado: dropdown con iconos (visible solo si es dorado)
     const gildedHost = box.querySelector('#f-gilded-ench');
     const gildedChk = box.querySelector('#f-gilded');
@@ -523,18 +735,28 @@ export async function mount(el, ctx) {
       title: `Editar — ${it.name}`, body: box,
       actions: [{
         label: 'Guardar', kind: 'primary', onClick: async () => {
+          const quantity = Number(box.querySelector('#f-qty').value);
+          if (!Number.isInteger(quantity) || quantity < 1) {
+            editError.textContent = 'La cantidad debe ser un número entero de al menos 1.';
+            return false;
+          }
+          editError.textContent = '';
           const patchBody = {
             power_level: box.querySelector('#f-power').value ? Number(box.querySelector('#f-power').value) : null,
             item_level: box.querySelector('#f-level').value ? Number(box.querySelector('#f-level').value) : null,
-            quantity: Math.max(0, Number(box.querySelector('#f-qty').value) || 0),
+            quantity,
             is_gilded: box.querySelector('#f-gilded').checked ? 1 : 0,
             gilded_enchantment_id: box.querySelector('#f-gilded').checked ? gildedId : null,
             notes: box.querySelector('#f-notes').value || null,
           };
           const loc = box.querySelector('#f-loc').value.trim();
-          await patch(e, patchBody);
+          if (!(await patch(e, patchBody))) return false;
           if (loc !== (col(e, 'localized_name') || '')) {
-            await api.patch(`/api/items/${entryItem(e).id}`, { localizedName: loc || null }).catch(() => {});
+            try {
+              await api.patch(`/api/items/${entryItem(e).id}`, { localizedName: loc || null });
+              await refreshAfterMutation();
+            }
+            catch (error) { toast.error(`No se guardó el nombre localizado: ${error.message}`); return false; }
           }
         },
       }],
@@ -543,58 +765,51 @@ export async function mount(el, ctx) {
 
   // ---- añadir copia desde catálogo ----
   async function openAddEntry() {
-    const cat = await api.get('/api/items?pageSize=500');
-    const items = cat.rows || cat.data || cat.items || cat || [];
-    const box = document.createElement('div');
-    box.innerHTML = `
-      <input class="mc-input" id="pk-search" placeholder="Buscar en el catálogo…" style="margin-bottom:10px">
-      <div class="mc-grid" id="pk-grid" style="max-height:50vh;overflow-y:auto"></div>`;
-    const grid = box.querySelector('#pk-grid');
-    const draw = (list) => {
-      grid.innerHTML = '';
-      for (const it of list.slice(0, 120)) {
-        const d = document.createElement('div');
-        d.className = `mc-card rarity-${it.rarity}`;
-        d.title = it.name;
-        d.innerHTML = it.image_path || it.imagePath
-          ? `<img src="${it.image_path || it.imagePath}" alt="${escapeHtml(it.name)}" loading="lazy">`
-          : `<div class="mc-img-missing">${escapeHtml(it.name[0])}</div>`;
-        d.onclick = async () => {
-          await api.post('/api/inventory', { itemId: it.id, quantity: 1 });
-          toast(`${it.name} añadido`, 'success');
-          document.querySelector('.mc-overlay')?.remove();
-          reload();
-        };
-        grid.append(d);
-      }
-    };
-    draw(items);
-    box.querySelector('#pk-search').oninput = (ev) => {
-      const q = ev.target.value.toLowerCase();
-      draw(items.filter((i) => i.name.toLowerCase().includes(q)
-        || (i.localizedName || i.localized_name || '').toLowerCase().includes(q)
-        || (i.aliases || []).some((a) => String(a).toLowerCase().includes(q))));
-    };
-    openModal({ title: 'Añadir copia al inventario', body: box });
+    try {
+      const item = await openItemPicker({ api, title: 'Añadir copia al inventario' });
+      if (!item) return;
+      await api.post('/api/inventory', { itemId: item.id, quantity: 1 });
+      await refreshAfterMutation();
+      toast.success(`${itemTitle(item)} añadido`);
+    } catch (error) {
+      toast.error(`No se pudo añadir la copia: ${error.message}`);
+    }
   }
 
   // ---------- ciclo ----------
   async function patch(e, body) {
-    await api.patch(`/api/inventory/${e.id}`, toApiPatch(body));
-    // la suscripción a data:changed recarga la pantalla y repinta la topbar
-    bus.emit('data:changed');
+    try {
+      await api.patch(`/api/inventory/${e.id}`, toApiPatch(body));
+    } catch (error) {
+      toast.error(`No se pudo guardar: ${error.message}`);
+      return false;
+    }
+    await refreshAfterMutation();
+    return true;
   }
 
-  async function reload(full = true) {
+  async function reload() {
+    if (signal?.aborted) return;
     const prev = state.selectedId;
     const [inv, profile] = await Promise.all([
-      api.get('/api/inventory?pageSize=500'),
+      api.getAll('/api/inventory'),
       api.get('/api/profile').catch(() => state.profile),
     ]);
-    state.entries = (inv.rows || inv.data || inv.items || inv || []).map(normEntry);
+    if (signal?.aborted) return;
+    state.entries = inv.map(normEntry);
     state.profile = profile;
     state.selectedId = prev && state.entries.find((e) => e.id === prev) ? prev : state.entries[0]?.id;
     renderAll();
+  }
+
+  async function refreshAfterMutation() {
+    if (!signal?.aborted) {
+      try { await reload(); }
+      catch (error) {
+        if (!signal?.aborted) toast.warn(`Guardado, pero no se pudo refrescar el inventario: ${error.message}`);
+      }
+    }
+    bus.emit('data:changed', { source: 'inventory' });
   }
 
   function renderAll() {
@@ -606,7 +821,28 @@ export async function mount(el, ctx) {
 
   $('#inv-sort').addEventListener('change', (ev) => { state.filters.sort = ev.target.value; renderGrid(); });
   $('#inv-add').onclick = openAddEntry;
-  bus.on('data:changed', () => reload(false));
+  const offDataChanged = bus.on('data:changed', (event) => {
+    if (event?.source === 'inventory') return;
+    reload().catch((error) => {
+      if (!signal?.aborted) toast.error(`No se pudo actualizar el inventario: ${error.message}`);
+    });
+  });
+  const offPrefsChanged = bus.on('prefs:changed', (prefs) => {
+    state.prefs = { ...state.prefs, ...(prefs || {}) };
+    renderGrid();
+    state.viewer?.setPaused(state.prefs.motion3d === false);
+  });
+  let disposed = false;
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    offDataChanged();
+    offPrefsChanged();
+    signal?.removeEventListener('abort', dispose);
+    try { state.viewer?.dispose(); } catch { /* noop */ }
+    state.viewer = null;
+  };
+  signal?.addEventListener('abort', dispose, { once: true });
 
   // Salto desde la búsqueda global (Ctrl+K): precarga el filtro antes de loadAll
   let jumpSearch = null;
@@ -623,6 +859,8 @@ export async function mount(el, ctx) {
   try {
     await loadAll();
   } catch (err) {
+    dispose();
+    if (signal?.aborted) return;
     el.innerHTML = `<div class="mc-empty"><p class="pixel">Error al cargar</p>
       <p>${escapeHtml(err.message)} — ¿está el servidor en marcha? (npm start)</p></div>`;
     return;
@@ -635,7 +873,5 @@ export async function mount(el, ctx) {
     card?.click();
   }
 
-  return () => {
-    try { state.viewer?.dispose(); } catch { /* noop */ }
-  };
+  return dispose;
 }

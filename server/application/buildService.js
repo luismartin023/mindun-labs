@@ -66,6 +66,7 @@ export function createBuildService({ buildRepo, itemRepo, enchantmentRepo, inven
         name: String(data.name).trim(),
         artifactItemIds: normalizeArtifacts(data.artifactItemIds),
         enchantChoices: data.enchantChoices ?? {},
+        enchantTiers: data.enchantTiers ?? {},
         weights: data.weights ?? {},
         status: data.status ?? 'draft',
         isFavorite: !!data.isFavorite,

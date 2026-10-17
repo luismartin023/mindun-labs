@@ -155,6 +155,7 @@ export const BUILD_GOALS = /** @type {const} */ ([
  * @property {string|null} armorItemId
  * @property {(string|null)[]} artifactItemIds  [a1,a2,a3]
  * @property {Object<string,(string|null)[]>} enchantChoices itemId→[e1,e2,e3]
+ * @property {Object<string,{enchantmentId:string,tier:number}[]>} [enchantTiers] itemId→niveles
  * @property {Object<string,number>} weights  criterio→peso 0-10
  * @property {object} [score]       Resultado cacheado del motor de puntuación
  * @property {string} [notes]

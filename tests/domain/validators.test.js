@@ -60,11 +60,21 @@ test('validateItem: slotIndex duplicado y opción duplicada en una ranura', () =
   assert.equal(dupOpt.valid, false);
 });
 
-test('validateInventoryEntry: válido, cantidad negativa y >3 encantamientos', () => {
+test('validateInventoryEntry: válido, cantidad mínima y >3 encantamientos', () => {
   assert.equal(validateInventoryEntry({ itemId: 'i1', quantity: 3 }).valid, true);
   assert.equal(validateInventoryEntry({ itemId: 'i1', quantity: -1 }).valid, false);
+  assert.equal(validateInventoryEntry({ itemId: 'i1', quantity: 0 }).valid, false);
   assert.equal(validateInventoryEntry({ itemId: 'i1', quantity: 1.5 }).valid, false);
   assert.equal(validateInventoryEntry({ quantity: 1 }).valid, false);
+  assert.equal(validateInventoryEntry({
+    itemId: 'i1',
+    selectedEnchantIds: ['e1', null, null],
+    enchantTiers: [{ enchantmentId: 'e1', tier: 2 }],
+  }).valid, true);
+  assert.equal(validateInventoryEntry({
+    itemId: 'i1',
+    enchantTiers: [{ enchantmentId: 'e1', tier: 0 }],
+  }).valid, false);
   assert.equal(
     validateInventoryEntry({ itemId: 'i1', selectedEnchantIds: ['a', 'b', 'c', 'd'] }).valid,
     false);
@@ -83,6 +93,11 @@ test('validateBuild: válido pasa; 4 artefactos y duplicados rechazados', () => 
   assert.equal(validateBuild({ name: 'B', artifactItemIds: ['t1', 't1'] }).valid, false);
   assert.equal(validateBuild({ artifactItemIds: [] }).valid, false); // sin name
   assert.equal(validateBuild({ name: 'B', enchantChoices: { m1: ['a', 'b', 'c', 'd'] } }).valid, false);
+  assert.equal(validateBuild({
+    name: 'B',
+    enchantTiers: { m1: [{ enchantmentId: 'e1', tier: 3 }] },
+  }).valid, true);
+  assert.equal(validateBuild({ name: 'B', enchantTiers: { m1: 'invalid' } }).valid, false);
   assert.equal(validateBuild({ name: 'B', weights: { survival: 11 } }).valid, false);
   assert.equal(validateBuild({ name: 'B', weights: { survival: 'alto' } }).valid, false);
 });

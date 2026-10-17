@@ -143,7 +143,13 @@ function optionPanel({ options, selectedId, onPick, title = 'Elegir encantamient
     list.innerHTML = '';
     if (allowEmpty) list.appendChild(row(null, null));
     const hits = options.filter((e) => !q ||
-      `${e.name} ${e.localizedName || ''}`.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().includes(q));
+      [e.name, e.localizedName, ...(e.aliases || [])]
+        .filter(Boolean)
+        .join(' ')
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .toLowerCase()
+        .includes(q));
     for (const e of hits) list.appendChild(row(e, e.id));
     if (!hits.length) {
       const p = document.createElement('p');
@@ -227,7 +233,7 @@ export function enchantDropdown({ options = [], value = null, onPick, placeholde
  * @param {(string|null)[]} opts.selectedIds
  * @param {Array<Array<object>>} [opts.optionsBySlot]
  * @param {{enchantmentId:string,tier:number}[]} [opts.tiers] niveles actuales
- * @param {Function} [opts.onChange]     (ids[3]) => {}
+ * @param {Function} [opts.onChange]     (ids[3], tiers[]) => {}
  * @param {Function} [opts.onTiersChange] ([{enchantmentId,tier}]) => {}
  * @returns {HTMLElement}
  */
@@ -297,10 +303,22 @@ export function enchantSlotsEditor({ item, selectedIds = [], optionsBySlot = [],
           c.className = `ench-tier-chip${(tierMap[ench.id] ?? maxTier(ench)) === t ? ' on' : ''}`;
           c.textContent = ROMAN[t - 1];
           c.title = `${enchantName(ench)} nivel ${ROMAN[t - 1]}`;
-          c.addEventListener('click', (ev) => {
+          c.addEventListener('click', async (ev) => {
             ev.stopPropagation();
+            if ((tierMap[ench.id] ?? maxTier(ench)) === t) return;
+            const hadTier = Object.prototype.hasOwnProperty.call(tierMap, ench.id);
+            const previousTier = tierMap[ench.id];
             tierMap[ench.id] = t;
-            onTiersChange?.(Object.entries(tierMap).map(([enchantmentId, tier]) => ({ enchantmentId, tier })));
+            let saved;
+            try {
+              saved = await onTiersChange?.(
+                Object.entries(tierMap).map(([enchantmentId, tier]) => ({ enchantmentId, tier })),
+              );
+            } catch { saved = false; }
+            if (saved === false) {
+              if (hadTier) tierMap[ench.id] = previousTier;
+              else delete tierMap[ench.id];
+            }
             render();
           });
           group.appendChild(c);
@@ -318,17 +336,34 @@ export function enchantSlotsEditor({ item, selectedIds = [], optionsBySlot = [],
       ddWrap.className = 'ench-slot-dd';
       ddWrap.style.display = 'none';
       const taken = new Set(ids.filter((x, j) => j !== i && x));
-      const opts = (optionsBySlot[i] || []).filter((o) => !taken.has(o.id));
+      const opts = (optionsBySlot[i] || []).filter((o) =>
+        !taken.has(o.id) || o.multiplePerEquipment === true);
       const { panel, search } = optionPanel({
         options: opts,
         selectedId: id,
         title: `Encantamiento — espacio ${i + 1}`,
-        onPick: (newId) => {
+        onPick: async (newId) => {
           const old = ids[i];
+          if (old === newId) {
+            ddWrap.style.display = 'none';
+            return;
+          }
+          const previousTiers = { ...tierMap };
           ids[i] = newId;
-          if (!newId && old) delete tierMap[old];
+          if (old) delete tierMap[old];
           ddWrap.style.display = 'none';
-          onChange?.([...ids]);
+          const nextTiers = Object.entries(tierMap).map(([enchantmentId, tier]) => ({ enchantmentId, tier }));
+          let saved;
+          try {
+            saved = onChange
+              ? await onChange([...ids], nextTiers)
+              : await onTiersChange?.(nextTiers);
+          } catch { saved = false; }
+          if (saved === false) {
+            ids[i] = old;
+            Object.keys(tierMap).forEach((key) => delete tierMap[key]);
+            Object.assign(tierMap, previousTiers);
+          }
           render();
         },
       });
@@ -338,7 +373,18 @@ export function enchantSlotsEditor({ item, selectedIds = [], optionsBySlot = [],
       const toggle = () => {
         const show = ddWrap.style.display === 'none';
         closeAll();
-        if (show) { ddWrap.style.display = 'block'; search.focus(); }
+        if (show) {
+          ddWrap.style.display = 'block';
+          const panelWidth = panel.getBoundingClientRect().width;
+          const columnRect = col.getBoundingClientRect();
+          const left = Math.max(12, Math.min(
+            columnRect.left + (columnRect.width - panelWidth) / 2,
+            innerWidth - panelWidth - 12,
+          ));
+          ddWrap.style.left = `${left - columnRect.left}px`;
+          ddWrap.style.transform = 'none';
+          search.focus();
+        }
       };
       slot.addEventListener('click', toggle);
       slot.addEventListener('keydown', (ev) => {
@@ -352,7 +398,7 @@ export function enchantSlotsEditor({ item, selectedIds = [], optionsBySlot = [],
     if (!anyTier && ids.every((x) => !x)) {
       const hint = document.createElement('p');
       hint.className = 'muted';
-      hint.style.cssText = 'margin:4px 0 0;font-size:10px;width:100%';
+      hint.style.cssText = 'margin:4px 0 0;font-size:12px;width:100%';
       hint.textContent = 'Clic en un rombo para elegir; el nivel se ajusta con los chips I/II/III.';
       slotsRow.appendChild(hint);
     }

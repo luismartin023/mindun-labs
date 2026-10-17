@@ -11,6 +11,8 @@ export const title = 'Ajustes';
 
 export async function mount(el, ctx) {
   const { api, bus, prefs } = ctx;
+  let sizeSyncTimer = null;
+  let pendingCardSize = null;
 
   let profile = null;
   try { profile = await api.get('/api/profile'); } catch { /* tolerante */ }
@@ -31,9 +33,26 @@ export async function mount(el, ctx) {
 
   async function patchPrefs(patch) {
     try {
-      const cur = (await api.get('/api/profile'))?.prefs || {};
-      await api.patch('/api/profile', { prefs: { ...cur, ...patch } });
+      await api.patch('/api/profile', { prefs: patch });
     } catch { /* las prefs remotas son opcionales */ }
+  }
+
+  function scheduleCardSizeSync(value) {
+    pendingCardSize = value;
+    clearTimeout(sizeSyncTimer);
+    sizeSyncTimer = setTimeout(() => {
+      const size = pendingCardSize;
+      pendingCardSize = null;
+      void patchPrefs({ cardSize: size });
+    }, 300);
+  }
+
+  function flushCardSizeSync() {
+    clearTimeout(sizeSyncTimer);
+    if (pendingCardSize === null) return;
+    const size = pendingCardSize;
+    pendingCardSize = null;
+    void patchPrefs({ cardSize: size });
   }
 
   // ---------- Preferencias visuales ----------
@@ -57,8 +76,9 @@ export async function mount(el, ctx) {
       document.documentElement.style.setProperty('--card-size', `${r.value}px`);
       v.textContent = `${r.value}px`;
       savePrefs({ cardSize: Number(r.value) });
-      patchPrefs({ cardSize: Number(r.value) });
+      scheduleCardSizeSync(Number(r.value));
     });
+    r.addEventListener('change', flushCardSizeSync);
     row.append(lab, r, v);
     prefsEl.appendChild(row);
   }
@@ -112,8 +132,11 @@ export async function mount(el, ctx) {
   bExp.className = 'mc-btn';
   bExp.textContent = 'Crear respaldo JSON';
   bExp.addEventListener('click', async () => {
+    if (bExp.disabled) return;
+    bExp.disabled = true;
     try { await api.download('/api/export/backup?format=json', 'respaldo-mindun.json'); }
     catch (e) { toast.error(`No se pudo exportar: ${e.message}`); }
+    finally { bExp.disabled = false; }
   });
   const bImp = document.createElement('button');
   bImp.className = 'mc-btn';
@@ -144,11 +167,13 @@ export async function mount(el, ctx) {
   dzBtn.className = 'mc-btn mc-btn--danger';
   dzBtn.textContent = 'Re-sembrar datos desde wiki';
   dzBtn.addEventListener('click', async () => {
+    if (dzBtn.disabled) return;
     const ok = await confirmDialog({
       title: 'Re-sembrar datos', danger: true, confirmLabel: 'Re-sembrar',
       message: 'Esto reimporta el catálogo desde los datos wiki locales. ¿Continuar?',
     });
     if (!ok) return;
+    dzBtn.disabled = true;
     try {
       await api.post('/api/dev/reseed', {});
       toast.success('Resiembra completada');
@@ -159,9 +184,12 @@ export async function mount(el, ctx) {
       } else {
         toast.error(`Falló la resiembra: ${e.message}`);
       }
-    }
+    } finally { dzBtn.disabled = false; }
   });
   dangerEl.append(dzTxt, dzBtn);
 
-  return () => {};
+  return () => {
+    clearTimeout(sizeSyncTimer);
+    if (pendingCardSize !== null) void patchPrefs({ cardSize: pendingCardSize });
+  };
 }

@@ -33,7 +33,7 @@ function statCard(label, value, title = '') {
   v.textContent = value === null || value === undefined ? '—' : String(value);
   const l = document.createElement('div');
   l.className = 'pixel-sm muted';
-  l.style.fontSize = '7px';
+  l.style.fontSize = '12px';
   l.style.marginTop = '6px';
   l.innerHTML = escapeHtml(label);
   d.append(v, l);
@@ -43,6 +43,8 @@ function statCard(label, value, title = '') {
 
 export async function mount(el, ctx) {
   const { api, bus, prefs } = ctx;
+  let sizeSyncTimer = null;
+  let pendingCardSize = null;
 
   el.innerHTML = `<div class="screen-page"><div class="wrap">
     <h2 class="pixel-sm" style="margin:0">Perfil</h2>
@@ -67,7 +69,7 @@ export async function mount(el, ctx) {
     formEl.appendChild(emptyState({
       icon: '⚠', title: 'Perfil no disponible', message: e.message,
     }));
-    return () => {};
+    return;
   }
 
   // ---------- Formulario de perfil ----------
@@ -106,6 +108,8 @@ export async function mount(el, ctx) {
   saveB.className = 'mc-btn mc-btn--primary';
   saveB.textContent = 'Guardar perfil';
   saveB.addEventListener('click', async () => {
+    if (saveB.disabled) return;
+    saveB.disabled = true;
     try {
       await api.patch('/api/profile', {
         displayName: nameI.value.trim() || 'Jugador',
@@ -116,6 +120,7 @@ export async function mount(el, ctx) {
       toast.success('Perfil guardado');
       bus.emit('data:changed');
     } catch (e) { toast.error(`No se pudo guardar: ${e.message}`); }
+    finally { saveB.disabled = false; }
   });
   formEl.append(row, mkField('Notas', notesI), saveB);
 
@@ -177,12 +182,15 @@ export async function mount(el, ctx) {
   revBtn.className = 'mc-btn mc-btn--sm';
   revBtn.textContent = 'Marcar revisión hecha hoy';
   revBtn.addEventListener('click', async () => {
+    if (revBtn.disabled) return;
+    revBtn.disabled = true;
     try {
       await api.patch('/api/profile', { lastReviewedAt: new Date().toISOString() });
       revTxt.innerHTML = `<span class="k muted">Última revisión del inventario:</span> <strong>${escapeHtml(fmtDateTime(new Date().toISOString()))}</strong>`;
       toast.success('Revisión registrada');
       bus.emit('data:changed');
     } catch (e) { toast.error(e.message); }
+    finally { revBtn.disabled = false; }
   });
   revRow.append(revTxt, revBtn);
   reviewEl.appendChild(revRow);
@@ -208,8 +216,9 @@ export async function mount(el, ctx) {
     document.documentElement.style.setProperty('--card-size', `${sizeR.value}px`);
     sizeV.textContent = `${sizeR.value}px`;
     savePrefs({ cardSize: Number(sizeR.value) });
-    patchPrefs({ cardSize: Number(sizeR.value) });
+    scheduleCardSizeSync(Number(sizeR.value));
   });
+  sizeR.addEventListener('change', flushCardSizeSync);
   sizeRow.append(sizeLab, sizeR, sizeV);
   prefsEl.appendChild(sizeRow);
 
@@ -229,8 +238,30 @@ export async function mount(el, ctx) {
 
   async function patchPrefs(patch) {
     try {
-      const current = (await api.get('/api/profile'))?.prefs || {};
-      await api.patch('/api/profile', { prefs: { ...current, ...patch } });
+      await api.patch('/api/profile', { prefs: patch });
     } catch { /* prefs remotas opcionales */ }
   }
+
+  function scheduleCardSizeSync(value) {
+    pendingCardSize = value;
+    clearTimeout(sizeSyncTimer);
+    sizeSyncTimer = setTimeout(() => {
+      const size = pendingCardSize;
+      pendingCardSize = null;
+      void patchPrefs({ cardSize: size });
+    }, 300);
+  }
+
+  function flushCardSizeSync() {
+    clearTimeout(sizeSyncTimer);
+    if (pendingCardSize === null) return;
+    const size = pendingCardSize;
+    pendingCardSize = null;
+    void patchPrefs({ cardSize: size });
+  }
+
+  return () => {
+    clearTimeout(sizeSyncTimer);
+    if (pendingCardSize !== null) void patchPrefs({ cardSize: pendingCardSize });
+  };
 }

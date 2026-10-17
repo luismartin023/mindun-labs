@@ -3,7 +3,6 @@
  * La puntuación se etiqueta siempre como estimación de los criterios del usuario.
  */
 import { escapeHtml } from '../app.js';
-import { qs } from '../api/client.js';
 import { openModal } from '../ui/modal.js';
 import { confirmDialog } from '../ui/confirm.js';
 import { toast } from '../ui/toast.js';
@@ -14,7 +13,7 @@ import { openItemPicker } from '../ui/itemPicker.js';
 import { enchantSlotsEditor, acceptsEnchants, slotOptionsFor } from '../ui/enchantSlots.js';
 import { weightsEditor, scoreBreakdownEl } from '../ui/scoring.js';
 import {
-  asList, goalLabel, itemTitle, GOAL_LABELS,
+  goalLabel, itemTitle, GOAL_LABELS,
 } from '../ui/format.js';
 
 export const title = 'Builds';
@@ -30,7 +29,7 @@ function emptyBuild() {
     name: '', goal: 'balanced', playstyle: '',
     meleeItemId: null, rangedItemId: null, armorItemId: null,
     artifactItemIds: [null, null, null],
-    enchantChoices: {}, weights: {}, notes: '', status: 'saved',
+    enchantChoices: {}, enchantTiers: {}, weights: {}, notes: '', status: 'saved',
   };
 }
 
@@ -56,7 +55,7 @@ export async function mount(el, ctx) {
       <button class="mc-btn mc-btn--primary" id="new-build">＋ Nueva build</button>
     </div>
     <p class="muted" style="margin:0;font-size:12px">La puntuación es una estimación según tus criterios, no una verdad absoluta.</p>
-    <div id="b-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px"></div>
+    <div id="b-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,320px),1fr));gap:12px"></div>
   </div></div>`;
 
   const listEl = el.querySelector('#b-list');
@@ -132,6 +131,7 @@ export async function mount(el, ctx) {
     draft.artifactItemIds = [...(draft.artifactItemIds || [])].slice(0, 3);
     while (draft.artifactItemIds.length < 3) draft.artifactItemIds.push(null);
     draft.enchantChoices = draft.enchantChoices || {};
+    draft.enchantTiers = draft.enchantTiers || {};
     draft.weights = draft.weights || {};
     const isNew = !build?.id;
 
@@ -232,20 +232,30 @@ export async function mount(el, ctx) {
         const card = item
           ? itemCard({ item, size: 52, showPower: false, showQty: false, showFav: false, title: `${d.label}: ${itemTitle(item)}`, onClick: pick })
           : (() => {
-              const s = document.createElement('div');
+              const s = document.createElement('button');
+              s.type = 'button';
               s.className = 'equip-slot empty';
               s.style.width = '52px'; s.style.height = '52px';
-              s.setAttribute('role', 'button'); s.tabIndex = 0;
+              s.setAttribute('aria-label', `Elegir ${d.label}`);
               const plus = document.createElement('span');
               plus.className = 'pixel muted'; plus.textContent = '+';
               s.appendChild(plus);
               s.addEventListener('click', pick);
-              s.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') pick(); });
               return s;
             })();
         async function pick() {
-          const chosen = await openItemPicker({ api, category: d.cat, title: d.label });
+          const chosen = await openItemPicker({
+            api,
+            category: d.cat,
+            title: d.label,
+            excludeIds: equippedItemIds().filter((id) => id !== d.get()),
+          });
           if (!chosen) return;
+          const previousId = d.get();
+          if (previousId && previousId !== chosen.id) {
+            delete draft.enchantChoices[previousId];
+            delete draft.enchantTiers[previousId];
+          }
           d.set(chosen.id);
           renderSlots();
           renderEnchants();
@@ -253,14 +263,19 @@ export async function mount(el, ctx) {
         }
         const lab = document.createElement('span');
         lab.className = 'muted pixel-sm';
-        lab.style.fontSize = '7px';
+        lab.style.fontSize = '11px';
         lab.textContent = d.label;
         cell.append(card, lab);
         if (item) {
           const rm = document.createElement('button');
           rm.className = 'mc-btn mc-btn--sm mc-btn--ghost';
           rm.textContent = 'Quitar';
-          rm.addEventListener('click', () => { d.set(null); delete draft.enchantChoices[item.id]; renderSlots(); renderEnchants(); schedulePreview(); });
+          rm.addEventListener('click', () => {
+            d.set(null);
+            delete draft.enchantChoices[item.id];
+            delete draft.enchantTiers[item.id];
+            renderSlots(); renderEnchants(); schedulePreview();
+          });
           cell.appendChild(rm);
         }
         slotsRow.appendChild(cell);
@@ -283,14 +298,20 @@ export async function mount(el, ctx) {
         const h = document.createElement('p');
         h.className = 'pixel-sm';
         h.style.margin = '0 0 2px';
-        h.style.fontSize = '8px';
+        h.style.fontSize = '13px';
         h.textContent = itemTitle(item);
         row.appendChild(h);
         row.appendChild(enchantSlotsEditor({
           item,
           selectedIds: draft.enchantChoices[id] || [null, null, null],
+          tiers: draft.enchantTiers[id] || [],
           optionsBySlot: slotOptionsFor(item, state.enchMap),
-          onChange: (ids) => { draft.enchantChoices[id] = ids; schedulePreview(); },
+          onChange: (ids, tiers) => {
+            draft.enchantChoices[id] = ids;
+            draft.enchantTiers[id] = tiers;
+            schedulePreview();
+          },
+          onTiersChange: (tiers) => { draft.enchantTiers[id] = tiers; schedulePreview(); },
         }));
         enchWrap.appendChild(row);
       }
@@ -298,22 +319,26 @@ export async function mount(el, ctx) {
 
     // vista previa (debounce)
     let pvTimer = null;
+    let previewVersion = 0;
     function schedulePreview() {
       clearTimeout(pvTimer);
-      pvTimer = setTimeout(runPreview, 450);
+      const version = ++previewVersion;
+      pvTimer = setTimeout(() => runPreview(version), 450);
     }
-    async function runPreview() {
+    async function runPreview(version = ++previewVersion) {
       if (!equippedItemIds().length) {
         pvBox.innerHTML = '<p class="muted" style="margin:0">Equipo al menos una pieza para estimar.</p>';
         return;
       }
       pvBox.innerHTML = '<p class="muted" style="margin:0">Calculando…</p>';
       try {
-        const res = await api.post('/api/builds/score-preview', draft);
+        const res = await api.post('/api/builds/score-preview', JSON.parse(JSON.stringify(draft)));
+        if (version !== previewVersion || !body.isConnected) return;
         const score = res?.total !== undefined ? res : res?.score;
         pvBox.innerHTML = '';
         pvBox.appendChild(scoreBreakdownEl(score));
       } catch {
+        if (version !== previewVersion || !body.isConnected) return;
         pvBox.innerHTML = '<p class="muted" style="margin:0">Vista previa no disponible.</p>';
       }
     }
@@ -330,7 +355,7 @@ export async function mount(el, ctx) {
       title: isNew ? 'Nueva build' : `Editar build — ${build.name}`,
       body,
       wide: true,
-      onClose: () => clearTimeout(pvTimer),
+      onClose: () => { clearTimeout(pvTimer); previewVersion += 1; },
       actions: [
         { label: 'Cancelar', kind: 'ghost', onClick: () => {} },
         {
@@ -360,9 +385,9 @@ export async function mount(el, ctx) {
     listEl.innerHTML = '<p class="muted">Cargando builds…</p>';
     try {
       const [builds, items, enchs, meta] = await Promise.all([
-        api.get('/api/builds').then(asList).catch(() => []),
-        api.get(`/api/items${qs({ pageSize: 5000 })}`).then(asList).catch(() => []),
-        api.get('/api/enchantments?pageSize=2000').then(asList).catch(() => []),
+        api.getAll('/api/builds'),
+        api.getAll('/api/items'),
+        api.getAll('/api/enchantments'),
         api.get('/api/meta').catch(() => null),
       ]);
       state.builds = builds;

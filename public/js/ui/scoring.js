@@ -136,7 +136,7 @@ export function scoreBreakdownEl(score, criteria = SCORE_CRITERIA) {
     const val = document.createElement('span');
     val.className = 'pixel-sm';
     val.style.textAlign = 'right';
-    val.style.fontSize = '8px';
+    val.style.fontSize = '11px';
     if (entry.value === null || entry.value === undefined) {
       val.textContent = 'Sin datos';
       val.classList.add('muted');

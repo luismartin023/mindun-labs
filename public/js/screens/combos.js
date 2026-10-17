@@ -78,10 +78,13 @@ export async function mount(el, ctx) {
     add.className = 'mc-btn mc-btn--sm';
     add.textContent = '＋ Elegir';
     add.addEventListener('click', async () => {
-      const it = await openItemPicker({ api, title: label, excludeIds: [...state.requiredIds, ...state.excludedIds] });
-      if (!it) return;
-      ids.push(it.id);
-      render();
+      add.disabled = true;
+      try {
+        const it = await openItemPicker({ api, title: label, excludeIds: [...state.requiredIds, ...state.excludedIds] });
+        if (!it) return;
+        ids.push(it.id);
+        render();
+      } finally { add.disabled = false; }
     });
     function render() {
       row.innerHTML = '';
@@ -193,26 +196,38 @@ export async function mount(el, ctx) {
   const dL = document.createElement('p');
   dL.className = 'mc-label';
   dL.textContent = 'Encantamientos deseados';
-  const dPick = enchantChipsPicker({
-    options: enchantOptions,
-    values: constraints.desiredEnchantIds,
-    placeholder: 'Añadir deseado…',
-    onChange: (ids) => { constraints.desiredEnchantIds = ids; },
-  });
-  dWrap.append(dL, dPick);
   const fWrap = document.createElement('div');
   const fL = document.createElement('p');
   fL.className = 'mc-label';
   fL.textContent = 'Encantamientos prohibidos';
-  const fPick = enchantChipsPicker({
-    options: enchantOptions,
-    values: constraints.forbiddenEnchantIds,
-    placeholder: 'Añadir prohibido…',
-    onChange: (ids) => { constraints.forbiddenEnchantIds = ids; },
-  });
-  fWrap.append(fL, fPick);
   enchBlock.append(dWrap, fWrap);
   form.appendChild(enchBlock);
+
+  function renderEnchantFilters() {
+    const desiredPicker = enchantChipsPicker({
+      options: enchantOptions.filter((option) => !constraints.forbiddenEnchantIds.includes(option.id)),
+      values: constraints.desiredEnchantIds,
+      placeholder: 'Añadir deseado…',
+      onChange: (ids) => {
+        constraints.desiredEnchantIds = ids;
+        constraints.forbiddenEnchantIds = constraints.forbiddenEnchantIds.filter((id) => !ids.includes(id));
+        renderEnchantFilters();
+      },
+    });
+    const forbiddenPicker = enchantChipsPicker({
+      options: enchantOptions.filter((option) => !constraints.desiredEnchantIds.includes(option.id)),
+      values: constraints.forbiddenEnchantIds,
+      placeholder: 'Añadir prohibido…',
+      onChange: (ids) => {
+        constraints.forbiddenEnchantIds = ids;
+        constraints.desiredEnchantIds = constraints.desiredEnchantIds.filter((id) => !ids.includes(id));
+        renderEnchantFilters();
+      },
+    });
+    dWrap.replaceChildren(dL, desiredPicker);
+    fWrap.replaceChildren(fL, forbiddenPicker);
+  }
+  renderEnchantFilters();
 
   const wL = document.createElement('p');
   wL.className = 'mc-label';
@@ -248,7 +263,7 @@ export async function mount(el, ctx) {
         limit: constraints.limit,
       };
       const res = await api.post('/api/builds/generate', body);
-      const results = asList(res?.results) || asList(res);
+      const results = Array.isArray(res?.results) ? res.results : asList(res);
       state.results = results;
       state.total = res?.explored ?? res?.total ?? results.length;
       state.truncated = Boolean(res?.truncated);
@@ -341,6 +356,8 @@ export async function mount(el, ctx) {
       save.className = 'mc-btn mc-btn--sm mc-btn--primary';
       save.textContent = 'Guardar como build';
       save.addEventListener('click', async () => {
+        if (save.disabled) return;
+        save.disabled = true;
         try {
           const name = `Sugerencia ${new Date().toLocaleString('es-ES')}`;
           const arts = (s.artifacts || []).map((a) => (typeof a === 'string' ? a : a?.id ?? null));
@@ -354,6 +371,7 @@ export async function mount(el, ctx) {
           toast.success('Guardada en Builds');
           bus.emit('data:changed');
         } catch (e) { toast.error(`No se pudo guardar: ${e.message}`); }
+        finally { save.disabled = false; }
       });
       const cmp = document.createElement('button');
       cmp.className = 'mc-btn mc-btn--sm';
@@ -374,23 +392,15 @@ export async function mount(el, ctx) {
   // precargar ítems para tarjetas de requeridos/excluidos y resultados
   try {
     const [items, enchs] = await Promise.all([
-      api.get('/api/items?pageSize=5000').then(asList),
-      api.get('/api/enchantments?pageSize=2000').then(asList).catch(() => []),
+      api.getAll('/api/items'),
+      api.getAll('/api/enchantments').catch((error) => {
+        toast.warn(`Encantamientos no disponibles: ${error.message}`);
+        return [];
+      }),
     ]);
     for (const i of items) itemsById[i.id] = i;
     enchantOptions = enchs;
-    dPick.replaceWith(enchantChipsPicker({
-      options: enchantOptions,
-      values: constraints.desiredEnchantIds,
-      placeholder: 'Añadir deseado…',
-      onChange: (ids) => { constraints.desiredEnchantIds = ids; },
-    }));
-    fPick.replaceWith(enchantChipsPicker({
-      options: enchantOptions,
-      values: constraints.forbiddenEnchantIds,
-      placeholder: 'Añadir prohibido…',
-      onChange: (ids) => { constraints.forbiddenEnchantIds = ids; },
-    }));
+    renderEnchantFilters();
   } catch (e) {
     toast.warn(`Catálogo no disponible: ${e.message}`);
   }
